@@ -176,7 +176,7 @@ fn error(v: &Value) -> String {
         Some("invalid_client") => {
             "ely.by refused this launcher's application registration (client ID or secret).".into()
         }
-        Some("invalid_grant") => SIGN_IN_AGAIN.into(),
+        Some("invalid_grant") => "The ely.by sign-in expired. Sign in again.".into(),
         Some("invalid_scope") => "ely.by refused the permissions this launcher asks for.".into(),
         Some("invalid_request") => match detail {
             Some(d) => format!("ely.by sign-in failed: {d}"),
@@ -220,7 +220,12 @@ pub(super) fn wait_for_code(
                 let _ = stream.set_nonblocking(false);
                 let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
                 let request = read_request(&mut stream);
-                let Some((target, _)) = request.split_once(' ') else {
+                // "GET /oauth/ely?code=… HTTP/1.1": the method, then the target.
+                let Some(target) = request
+                    .lines()
+                    .next()
+                    .and_then(|line| line.split_whitespace().nth(1))
+                else {
                     respond(&mut stream, 400, "Bad request");
                     continue;
                 };
@@ -635,6 +640,42 @@ mod tests {
             confidential.iter().find(|(key, _)| *key == "client_secret"),
             Some(&("client_secret", "secret"))
         );
+    }
+
+    #[test]
+    fn the_browser_round_trip_answers_its_path() {
+        use std::io::{Read, Write};
+        // A free port, then the launcher binds it.
+        let probe = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = probe.local_addr().unwrap().port();
+        drop(probe);
+        let redirect = format!("http://127.0.0.1:{port}/oauth/ely");
+        let browser = std::thread::spawn(move || {
+            let mut stream = None;
+            for _ in 0..200 {
+                match std::net::TcpStream::connect(("127.0.0.1", port)) {
+                    Ok(s) => {
+                        stream = Some(s);
+                        break;
+                    }
+                    Err(_) => std::thread::sleep(Duration::from_millis(10)),
+                }
+            }
+            let mut stream = stream.expect("the launcher listens");
+            stream
+                .write_all(
+                    b"GET /oauth/ely?code=abc&state=state HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+                )
+                .unwrap();
+            let mut page = String::new();
+            stream.read_to_string(&mut page).unwrap();
+            page
+        });
+        let code = wait_for_code(&redirect, "state", &|| false).unwrap();
+        assert_eq!(code, "abc");
+        let page = browser.join().unwrap();
+        assert!(page.starts_with("HTTP/1.1 200"), "{page}");
+        assert!(page.contains("Signed in to ely.by"), "{page}");
     }
 
     #[test]
