@@ -8,8 +8,9 @@ instead of Mojang's session server.
 ## What has to be registered
 
 Like Microsoft's Azure application, ely.by's OAuth2 application belongs to the maintainer. This
-fork's application is already registered as **`elytra-horizon`**: a **Desktop application**, which
-ely.by treats as a **public client** (no secret, PKCE required).
+fork's application is registered as **`elytra-horizon1`** (the name is `elytra-horizon`; ely.by
+appends the number when the slug is taken): a **Desktop application**, which ely.by treats as a
+**public client** (no secret, PKCE required).
 
 A Desktop application has **no redirect URI field, and none is needed**: ely.by accepts
 `http://127.0.0.1:<any port>` for desktop clients (RFC 8252 section 7.3), so the launcher's

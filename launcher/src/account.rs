@@ -38,7 +38,7 @@ pub const NOT_CONFIGURED: &str = "This build of the launcher has no Microsoft si
 pub const ELY_NOT_CONFIGURED: &str = "This build of the launcher has no ely.by sign-in (HORIZON_ELYBY_CLIENT_ID), so it can't add an ely.by account.";
 /// The ely.by application registered for this fork. It is a public client: nothing in it is a
 /// secret, and PKCE protects the redirect (RFC 7636).
-pub const DEFAULT_ELYBY_CLIENT_ID: &str = "elytra-horizon";
+pub const DEFAULT_ELYBY_CLIENT_ID: &str = "elytra-horizon1";
 /// The loopback the OAuth application registered with ely.by redirects to.
 pub const ELY_REDIRECT: &str = "http://127.0.0.1:48632/oauth/ely";
 /// What every Play says while no account in the launcher owns the game.
