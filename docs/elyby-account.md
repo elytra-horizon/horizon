@@ -8,12 +8,17 @@ instead of Mojang's session server.
 ## What has to be registered
 
 Like Microsoft's Azure application, ely.by's OAuth2 application belongs to the maintainer. This
-fork's application is already registered as **`elytra-horizon`**: a **public client** with no
-secret, which ely.by requires to use PKCE. Only the redirect URI has to be added:
+fork's application is already registered as **`elytra-horizon`**: a **Desktop application**, which
+ely.by treats as a **public client** (no secret, PKCE required).
 
-1. https://account.ely.by/dev/applications → the `elytra-horizon` application → **Edit**.
-2. Redirect URI: `http://127.0.0.1:48632/oauth/ely` (the launcher's loopback; a development build
-   can use another port with `HORIZON_ELYBY_REDIRECT_URI`).
+A Desktop application has **no redirect URI field, and none is needed**: ely.by accepts
+`http://127.0.0.1:<any port>` for desktop clients (RFC 8252 section 7.3), so the launcher's
+`http://127.0.0.1:48632/oauth/ely` works as is (a development build can use another port with
+`HORIZON_ELYBY_REDIRECT_URI`).
+
+Do **not** register the launcher as a **Website** application: ely.by rejects loopback redirects
+for web applications ("invalid redirect URI") and requires a client secret for them. That error
+comes from the web-application form, not from this launcher.
 
 The client ID is the build default (`DEFAULT_ELYBY_CLIENT_ID` in `account.rs`). A release can still
 override it with the repository variable `HORIZON_ELYBY_CLIENT_ID` (read with `option_env!`), or at
