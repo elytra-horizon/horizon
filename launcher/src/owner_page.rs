@@ -1,23 +1,16 @@
-//! The owner gate in the window (`horizon_launcher::account::launch`): the screen that asks for a
-//! Microsoft account that owns Minecraft: Java Edition. It covers the launcher once for players
-//! without one (those who played offline before the gate), and again whenever Play is refused.
-//! The sign-in runs on it, code and all.
+//! The account gate in the window (`horizon_launcher::account::launch`): the screen that says no
+//! account here can play, and points at Settings, where ely.by and offline accounts are added.
+//! It covers the launcher once for players without one, and again whenever Play is refused.
 use super::*;
 
 impl Launcher {
-    /// Whether the screen covers the window: no owner, and either Play was refused or the player
-    /// hasn't read it yet. The data question comes first.
+    /// Whether the screen covers the window: no account can play, and either Play was refused or
+    /// the player hasn't read it yet. The data question comes first.
     pub(crate) fn asking_owner(&self) -> bool {
-        (self.owner == Some(false) || sign_in_preview())
-            && (self.owner_screen_open || !self.settings.owner_notice_seen || sign_in_preview())
+        self.owner == Some(false)
+            && (self.owner_screen_open || !self.settings.owner_notice_seen)
             && !self.asking_consent()
             && self.opening.is_none()
-    }
-
-    /// Opens the screen and starts the sign-in on it.
-    pub(crate) fn sign_in_to_play(&mut self) {
-        self.owner_screen_open = true;
-        self.start_sign_in();
     }
 
     /// Closes it; it comes back with the next refused Play.
@@ -33,27 +26,15 @@ impl Launcher {
     pub(crate) fn owner_screen(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
         let t = self.theme;
         let n = t.night;
-        let configured = account::client_id().is_some();
-        // The screenshot preview shows a code without asking Microsoft for one.
-        let state = match &self.sign_in_state {
-            _ if sign_in_preview() => Shown::Code("https://www.microsoft.com/link", "K7Q-4MXR"),
-            _ if !configured => Shown::Error(tr(account::NOT_CONFIGURED)),
-            Some(SignInState::Starting) => Shown::Starting("Asking Microsoft…"),
-            Some(SignInState::Working(phase)) => Shown::Starting(phase.label()),
-            Some(SignInState::Code(code)) => Shown::Code(&code.verification_uri, &code.user_code),
-            Some(SignInState::Browser(_)) => Shown::Starting("Waiting for the browser…"),
-            Some(SignInState::Done(Err(e))) => Shown::Error(e),
-            Some(SignInState::Done(Ok(_))) | None => Shown::Idle,
-        };
         if crate::glass_ui::on() {
-            return self.glass_owner_screen(state, configured, cx);
+            return self.glass_owner_screen(cx);
         }
         let line = |s: &str, color: u32| {
             shell::text(theme::night::UI, shell::c(color))
                 .relative()
                 .child(tr(s).to_string())
         };
-        let mut body = div()
+        let body = div()
             .relative()
             .flex()
             .flex_col()
@@ -61,157 +42,21 @@ impl Launcher {
             .child(
                 shell::text(theme::night::CAPTION, shell::c(n.muted))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child(tr("Microsoft account").to_string()),
+                    .child(tr("Account").to_string()),
             )
             .child(
                 shell::text(theme::night::TITLE, shell::c(n.ink))
                     .mb(px(4.))
-                    .child(tr("Sign in to play").to_string()),
+                    .child(tr("No account can play yet").to_string()),
             )
             .child(line(
-                "Horizon needs a Microsoft account that owns Minecraft: Java Edition, like other launchers.",
+                "Horizon plays with an ely.by account or an offline name. Add one in Settings.",
                 n.ink_soft,
             ))
             .child(line(
-                "No Minecraft install needed: Horizon downloads it from Mojang for your account.",
+                "Microsoft sign-in is not part of this build.",
                 n.ink_soft,
             ));
-        let raised = || {
-            div()
-                .relative()
-                .mt(px(10.))
-                .p(px(18.))
-                .rounded(px(theme::night::RADIUS_CONTROL))
-                .bg(plate::alpha(n.card_hi, n.card_hi_alpha))
-                .border_1()
-                .border_color(plate::alpha(n.stroke, n.stroke_alpha))
-        };
-        body = match state {
-            Shown::Code(uri, user_code) => {
-                let copy = user_code.to_string();
-                let (private_uri, link_uri, other_uri) =
-                    (uri.to_string(), uri.to_string(), uri.to_string());
-                body.child(
-                    raised()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap(px(16.))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .flex()
-                                .flex_col()
-                                .gap(px(4.))
-                                .child(
-                                    shell::text(theme::night::CAPTION, shell::c(n.ink_soft)).child(
-                                        trf(
-                                            "Open {link} in your browser and enter this code:",
-                                            // The page as the player would type it.
-                                            &[("link", short_link(uri))],
-                                        ),
-                                    ),
-                                )
-                                .child(
-                                    div()
-                                        .font_family(theme::MONO)
-                                        .font_weight(FontWeight::BOLD)
-                                        .text_size(px(30.))
-                                        .line_height(px(38.))
-                                        .text_color(shell::c(n.ink))
-                                        .child(user_code.to_string()),
-                                ),
-                        )
-                        .child(
-                            shell::action("owner-copy", shell::Action::Raised, &t)
-                                .child(shell::label(tr("Copy code").to_string()))
-                                .on_click(move |_, _, cx| {
-                                    copy_to_clipboard(
-                                        cx,
-                                        gpui::ClipboardItem::new_string(copy.clone()),
-                                    )
-                                }),
-                        ),
-                )
-                .child(
-                    div()
-                        .mt(px(8.))
-                        .flex()
-                        .flex_col()
-                        .items_start()
-                        .gap(px(4.))
-                        .when(!microsoft::has_private_window(), |col| {
-                            col.child(shell::text(theme::night::CAPTION, shell::c(n.muted)).child(
-                                tr("Open this link in a private window to pick another account."),
-                            ))
-                        })
-                        .child(
-                            div()
-                                .flex()
-                                .gap(px(8.))
-                                .child(if microsoft::has_private_window() {
-                                    shell::action("owner-private", shell::Action::Quiet, &t)
-                                        .child(shell::label(tr("Open in private window")))
-                                        .on_click(move |_, _, cx| {
-                                            microsoft::open_private(&private_uri, cx)
-                                        })
-                                } else {
-                                    shell::action("owner-copy-link", shell::Action::Quiet, &t)
-                                        .child(shell::label(tr("Copy link")))
-                                        .on_click(move |_, _, cx| {
-                                            copy_to_clipboard(
-                                                cx,
-                                                gpui::ClipboardItem::new_string(link_uri.clone()),
-                                            )
-                                        })
-                                })
-                                .child(
-                                    shell::action("owner-other", shell::Action::Quiet, &t)
-                                        .child(shell::label(tr(
-                                            "Use a different Microsoft account",
-                                        )))
-                                        .on_click(move |_, _, cx| {
-                                            microsoft::use_different_account(&other_uri, cx)
-                                        }),
-                                ),
-                        ),
-                )
-            }
-            Shown::Starting(what) => body.child(raised().child(
-                shell::text(theme::night::UI, shell::c(n.ink_soft)).child(tr(what).to_string()),
-            )),
-            Shown::Error(e) => body.child(
-                raised()
-                    .child(shell::text(theme::night::UI, shell::c(n.danger)).child(e.to_string())),
-            ),
-            Shown::Idle => body,
-        };
-        let main = match state {
-            Shown::Code(uri, _) => {
-                let uri = uri.to_string();
-                Some(
-                    shell::action("owner-open", shell::Action::Main, &t)
-                        .child(shell::label(tr("Open link").to_string()))
-                        .on_click(move |_, _, cx| cx.open_url(&uri)),
-                )
-            }
-            Shown::Starting(_) => None,
-            Shown::Error(_) if !configured => None,
-            _ => Some(
-                microsoft::sign_in_button("owner-sign-in", &t).on_click(cx.listener(
-                    |this, _: &ClickEvent, _, cx| {
-                        this.sign_in_to_play();
-                        cx.notify();
-                    },
-                )),
-            ),
-        };
-        let waiting = matches!(state, Shown::Code(..)).then(|| {
-            shell::text(theme::night::CAPTION, shell::c(n.muted))
-                .relative()
-                .child(tr("Waiting for Microsoft… the window goes on by itself.").to_string())
-        });
         let answers = div()
             .relative()
             .flex()
@@ -219,25 +64,20 @@ impl Launcher {
             .items_center()
             .gap(px(10.))
             .mt(px(14.))
-            .children(main)
+            .child(
+                shell::action("owner-accounts", shell::Action::Main, &t)
+                    .child(shell::label(tr("Accounts…").to_string()))
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.close_owner_screen();
+                        this.go(Page::Settings);
+                        cx.notify();
+                    })),
+            )
             .child(
                 shell::action("owner-later", shell::Action::Quiet, &t)
                     .child(shell::label(tr("Not now").to_string()))
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                         this.close_owner_screen();
-                        cx.notify();
-                    })),
-            )
-            // Not everyone has a Microsoft account that owns the game: ely.by and offline
-            // accounts are in Settings, so this screen never dead-ends.
-            .child(
-                shell::action("owner-other-accounts", shell::Action::Quiet, &t)
-                    .child(shell::label(
-                        tr("Use an ely.by or offline account").to_string(),
-                    ))
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.close_owner_screen();
-                        this.go(Page::Settings);
                         cx.notify();
                     })),
             );
@@ -256,8 +96,7 @@ impl Launcher {
         .max_w_full()
         .p(px(32.))
         .child(body)
-        .child(answers)
-        .children(waiting);
+        .child(answers);
         // The sky stays behind, dimmed: the sheet is over the launcher, not instead of it.
         div()
             .id("owner-gate")
@@ -278,25 +117,12 @@ impl Launcher {
     }
 
     /// The screen in the glass look: a dialog plate over the dimmed, blurred launcher (the
-    /// mockup's modals), its Sign in the Account card's white Microsoft button, its code in the
-    /// card's inner panel.
-    fn glass_owner_screen(
-        &self,
-        state: Shown,
-        configured: bool,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
+    /// mockup's modals), its text in the card's inner panel.
+    fn glass_owner_screen(&self, cx: &mut Context<Self>) -> Stateful<Div> {
         use crate::glass_ui::{self as ui, white};
         use horizon_theme::glass::{ink, radius};
         let t = self.theme;
-        let panel = || {
-            div()
-                .mt(px(20.))
-                .p(px(20.))
-                .rounded(px(radius::POPOVER))
-                .bg(white(0.045))
-        };
-        let mut card = ui::dialog_plate(radius::MODAL)
+        let card = ui::dialog_plate(radius::MODAL)
             .id("owner-card")
             .occlude()
             .flex()
@@ -305,7 +131,7 @@ impl Launcher {
             .w(px(520.))
             .max_w_full()
             .p(px(32.))
-            .child(ui::text(13., FontWeight::MEDIUM, ink::QUIET).child(tr("Microsoft account")))
+            .child(ui::text(13., FontWeight::MEDIUM, ink::QUIET).child(tr("Account")))
             .child(
                 div()
                     .mt(px(8.))
@@ -314,7 +140,7 @@ impl Launcher {
                     .text_size(px(28.))
                     .line_height(px(35.))
                     .text_color(white(ink::FULL))
-                    .child(tr("Sign in to play")),
+                    .child(tr("No account can play yet")),
             )
             .child(
                 div()
@@ -323,200 +149,48 @@ impl Launcher {
                     .flex_col()
                     .gap(px(8.))
                     .child(ui::text(14., FontWeight::NORMAL, ink::BODY).child(tr(
-                        "Horizon needs a Microsoft account that owns Minecraft: Java Edition, like other launchers.",
+                        "Horizon plays with an ely.by account or an offline name. Add one in \
+                         Settings.",
                     )))
-                    .child(ui::text(14., FontWeight::NORMAL, ink::BODY).child(tr(
-                        "No Minecraft install needed: Horizon downloads it from Mojang for your account.",
-))),
-            );
-        card = match state {
-            Shown::Code(uri, user_code) => {
-                let copy = user_code.to_string();
-                let (private_uri, link_uri, other_uri) =
-                    (uri.to_string(), uri.to_string(), uri.to_string());
-                card.child(
-                    panel()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap(px(16.))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .flex()
-                                .flex_col()
-                                .gap(px(4.))
-                                .child(ui::text(13., FontWeight::NORMAL, ink::NOTE).child(trf(
-                                    "Open {link} in your browser and enter this code:",
-                                    &[("link", short_link(uri))],
-                                )))
-                                .child(
-                                    div()
-                                        .font_family(theme::MONO)
-                                        .font_weight(FontWeight::BOLD)
-                                        .text_size(px(30.))
-                                        .line_height(px(38.))
-                                        .text_color(white(ink::FULL))
-                                        .child(user_code.to_string()),
-                                ),
+                    .child(
+                        ui::text(14., FontWeight::NORMAL, ink::BODY)
+                            .child(tr("Microsoft sign-in is not part of this build.")),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap(px(8.))
+                    .mt(px(24.))
+                    .child(
+                        ui::button(
+                            "owner-accounts".into(),
+                            tr("Accounts…").into(),
+                            Kind::Primary,
+                            &t,
                         )
-                        .child(ui::quiet("owner-copy", tr("Copy code"), 36., &t).on_click(
-                            move |_, _, cx| {
-                                copy_to_clipboard(cx, gpui::ClipboardItem::new_string(copy.clone()))
-                            },
-                        )),
-                )
-                .child(
-                    div()
-                        .mt(px(8.))
-                        .flex()
-                        .flex_col()
-                        .items_start()
-                        .gap(px(4.))
-                        .when(!microsoft::has_private_window(), |col| {
-                            col.child(ui::text(13., FontWeight::NORMAL, ink::QUIET).child(tr(
-                                "Open this link in a private window to pick another account.",
-                            )))
-                        })
-                        .child(
-                            div()
-                                .flex()
-                                .gap(px(8.))
-                                .child(if microsoft::has_private_window() {
-                                    ui::quiet(
-                                        "owner-private",
-                                        tr("Open in private window"),
-                                        32.,
-                                        &t,
-                                    )
-                                    .on_click(
-                                        move |_, _, cx| microsoft::open_private(&private_uri, cx),
-                                    )
-                                } else {
-                                    ui::quiet("owner-copy-link", tr("Copy link"), 32., &t).on_click(
-                                        move |_, _, cx| {
-                                            copy_to_clipboard(
-                                                cx,
-                                                gpui::ClipboardItem::new_string(link_uri.clone()),
-                                            )
-                                        },
-                                    )
-                                })
-                                .child(
-                                    ui::quiet(
-                                        "owner-other",
-                                        tr("Use a different Microsoft account"),
-                                        32.,
-                                        &t,
-                                    )
-                                    .on_click(
-                                        move |_, _, cx| {
-                                            microsoft::use_different_account(&other_uri, cx)
-                                        },
-                                    ),
-                                ),
-                        ),
-                )
-            }
-            Shown::Starting(what) => card
-                .child(panel().child(ui::text(14., FontWeight::NORMAL, ink::BODY).child(tr(what)))),
-            Shown::Error(e) => card.child(
-                panel().child(
-                    ui::text(14., FontWeight::NORMAL, ink::FULL)
-                        .text_color(ui::color(horizon_theme::glass::DANGER))
-                        .child(e.to_string()),
-                ),
-            ),
-            Shown::Idle => card,
-        };
-        let main: Option<AnyElement> = match state {
-            Shown::Code(uri, _) => {
-                let uri = uri.to_string();
-                Some(
-                    ui::button(
-                        "owner-open".into(),
-                        tr("Open link").into(),
-                        Kind::Primary,
-                        &t,
-                    )
-                    .h(px(44.))
-                    .px(px(24.))
-                    .on_click(move |_, _, cx| cx.open_url(&uri))
-                    .into_any_element(),
-                )
-            }
-            Shown::Starting(_) => None,
-            Shown::Error(_) if !configured => None,
-            _ => Some(
-                keyboard(
-                    div()
-                        .id("owner-sign-in")
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .gap(px(10.))
                         .h(px(44.))
                         .px(px(20.))
-                        .rounded(px(radius::ROW))
-                        .bg(gpui::white())
-                        .cursor_pointer()
-                        .hover(|s| s.opacity(0.9))
-                        .font_family(horizon_theme::glass::FONT)
-                        .text_size(px(15.))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(gpui::rgb(horizon_theme::glass::ON_LIGHT))
-                        .child(microsoft::logo(18.))
-                        .child(tr("Sign in with Microsoft")),
-                    &t,
-                )
-                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.sign_in_to_play();
-                    cx.notify();
-                }))
-                .into_any_element(),
-            ),
-        };
-        let later = ui::button("owner-later".into(), tr("Not now").into(), Kind::Ghost, &t)
-            .h(px(44.))
-            .px(px(20.))
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.close_owner_screen();
-                cx.notify();
-            }));
-        // Not everyone has a Microsoft account that owns the game: ely.by and offline accounts
-        // are in Settings, so this screen never dead-ends.
-        let other = ui::button(
-            "owner-other-accounts".into(),
-            tr("Use an ely.by or offline account").into(),
-            Kind::Ghost,
-            &t,
-        )
-        .h(px(44.))
-        .px(px(20.))
-        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-            this.close_owner_screen();
-            this.go(Page::Settings);
-            cx.notify();
-        }));
-        card = card.child(
-            div()
-                .flex()
-                .flex_wrap()
-                .items_center()
-                .gap(px(8.))
-                .mt(px(24.))
-                .children(main)
-                .child(later)
-                .child(other),
-        );
-        if matches!(state, Shown::Code(..)) {
-            card = card.child(
-                ui::text(13., FontWeight::NORMAL, ink::QUIET)
-                    .mt(px(12.))
-                    .child(tr("Waiting for Microsoft… the window goes on by itself.")),
+                        .on_click(cx.listener(
+                            |this, _: &ClickEvent, _, cx| {
+                                this.close_owner_screen();
+                                this.go(Page::Settings);
+                                cx.notify();
+                            },
+                        )),
+                    )
+                    .child(
+                        ui::button("owner-later".into(), tr("Not now").into(), Kind::Ghost, &t)
+                            .h(px(44.))
+                            .px(px(20.))
+                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                this.close_owner_screen();
+                                cx.notify();
+                            })),
+                    ),
             );
-        }
         div()
             .id("owner-gate")
             .absolute()
@@ -539,46 +213,5 @@ impl Launcher {
                     .bg(ui::scrim()),
             )
             .child(card)
-    }
-}
-
-/// What the sheet shows of the sign-in.
-#[derive(Clone, Copy)]
-enum Shown<'a> {
-    Idle,
-    /// What the sign-in is doing.
-    Starting(&'static str),
-    /// The page and the code to enter there.
-    Code(&'a str, &'a str),
-    Error(&'a str),
-}
-
-/// `HORIZON_LAUNCHER_PAGE=sign-in` opens the sheet with a made-up code, for screenshots: nothing
-/// asks Microsoft, and the gate itself is as it was (no account, no Play).
-pub(super) fn sign_in_preview() -> bool {
-    static PREVIEW: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *PREVIEW.get_or_init(|| std::env::var("HORIZON_LAUNCHER_PAGE").as_deref() == Ok("sign-in"))
-}
-
-/// `https://www.microsoft.com/link` as `microsoft.com/link`.
-fn short_link(uri: &str) -> &str {
-    let uri = uri
-        .trim_start_matches("https://")
-        .trim_start_matches("http://");
-    uri.strip_prefix("www.").unwrap_or(uri)
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn links_are_shown_as_typed() {
-        assert_eq!(
-            super::short_link("https://www.microsoft.com/link"),
-            "microsoft.com/link"
-        );
-        assert_eq!(
-            super::short_link("https://login.live.com/oauth20_remoteconnect.srf"),
-            "login.live.com/oauth20_remoteconnect.srf"
-        );
     }
 }

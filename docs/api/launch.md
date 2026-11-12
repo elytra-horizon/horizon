@@ -17,10 +17,11 @@ reference implementation. Proposed in horizon-rust/horizon#3545.
 
 The whole way, from picking a build to playing: [launch-guide.md](launch-guide.md). In short:
 
-1. Start Horizon only for a player signed in with a Microsoft account that owns Minecraft: Java Edition, and
-   hand over that account's session (`--session-stdin`, or `--session-file`), never on the command line. This
-   is the same owner gate `horizon-launcher` applies before every start. Horizon never downloads Mojang's
-   files; a launcher that does downloads them only for that owner.
+1. Start Horizon only for a player with an account the launcher can play (an ely.by account or an offline
+   name), and hand over that account's session when it has one (`--session-stdin`, or `--session-file`),
+   never on the command line. This is the same gate `horizon-launcher` applies before every start. Horizon
+   never downloads Mojang's files; a launcher that does downloads them from the player's own install or
+   Mojang.
 2. Ask the build what it takes: `horizon-client --launch-api` prints JSON with `launch_api` (the version),
    `options` and `content` (which mods, shader packs and packs it loads). Pass only options it lists: any other is
    refused with exit code 2.
@@ -40,7 +41,7 @@ option, the `--launch-api` reply and the exit codes.
 
 ### The session JSON
 
-The account the game joins online-mode servers with ([microsoft-account.md](../microsoft-account.md)):
+The account the game joins online-mode servers with ([accounts.md](../accounts.md)):
 
 ```json
 {"name": "Alex", "uuid": "069a79f444e94726a5befca90e38aaf5", "access_token": "…", "user_type": "msa", "xuid": "…"}

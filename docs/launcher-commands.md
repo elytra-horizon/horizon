@@ -68,7 +68,7 @@ MCP: `prepare`.
 
 ## `horizon-launcher play`
 
-Start the client (needs a signed-in Microsoft account that owns Minecraft: Java Edition).
+Start the client (needs a signed-in account: ely.by, or an offline name).
 
     horizon-launcher play
 
@@ -146,23 +146,13 @@ The signed-in accounts and which one plays.
 
 MCP: `account_list`.
 
-## `horizon-launcher account sign-in`
-
-Sign in with a Microsoft account in your browser (device code). Play needs one that owns Minecraft: Java Edition.
-
-    horizon-launcher account sign-in
-
-- `--for`: Sign this account (name or UUID) in again: another Microsoft account is refused and who plays stays the same
-
-MCP: `account_sign_in`.
-
 ## `horizon-launcher account elyby`
 
 Sign in with an ely.by account in your browser (OAuth2). It plays online servers that accept ely.by, with its own name, skin and cape.
 
     horizon-launcher account elyby
 
-MCP: none: the page opens in the player's browser.
+MCP: `account_elyby`.
 
 ## `horizon-launcher account offline`
 
@@ -172,7 +162,7 @@ Add an offline account: a name, and the game's offline UUID. It plays offline-mo
 
 - `NAME`
 
-MCP: none: an account change the player makes in the launcher.
+MCP: `account_offline`.
 
 ## `horizon-launcher account refresh`
 

@@ -7,6 +7,9 @@ use super::*;
 use base64::Engine;
 use sha2::{Digest, Sha256};
 
+/// What an ely.by sign-in says when its refresh token or profile no longer works.
+pub(super) const ELY_SIGN_IN_AGAIN: &str = "The ely.by sign-in expired. Sign in again.";
+
 /// The scopes the launcher asks for: who the player is, a refresh token, and the Minecraft
 /// session token itself.
 pub(super) const SCOPE: &str = "account_info offline_access minecraft_server_session";
@@ -176,7 +179,7 @@ fn error(v: &Value) -> String {
         Some("invalid_client") => {
             "ely.by refused this launcher's application registration (client ID or secret).".into()
         }
-        Some("invalid_grant") => "The ely.by sign-in expired. Sign in again.".into(),
+        Some("invalid_grant") => ELY_SIGN_IN_AGAIN.into(),
         Some("invalid_scope") => "ely.by refused the permissions this launcher asks for.".into(),
         Some("invalid_request") => match detail {
             Some(d) => format!("ely.by sign-in failed: {d}"),
@@ -399,7 +402,7 @@ pub(super) fn profile(ep: &Endpoints, token: &str) -> Result<Account, String> {
         "ely.by",
     )?;
     if status == 401 || status == 403 {
-        return Err(SIGN_IN_AGAIN.into());
+        return Err(ELY_SIGN_IN_AGAIN.into());
     }
     let (Some(uuid), Some(name)) = (
         str_field(&v, "uuid").filter(|_| status == 200),
@@ -522,7 +525,7 @@ pub(super) fn check(
     progress: &dyn Fn(session::Phase),
 ) -> Check {
     if secrets.sign_in_required {
-        return Check::NoAnswer(SIGN_IN_AGAIN.into(), secrets);
+        return Check::NoAnswer(ELY_SIGN_IN_AGAIN.into(), secrets);
     }
     if force || secrets.minecraft_expires_at <= now() + RENEW_BEFORE {
         progress(session::Phase::ElyBy);
@@ -531,7 +534,7 @@ pub(super) fn check(
             let refresh_token = secrets
                 .ely_refresh
                 .clone()
-                .ok_or_else(|| SIGN_IN_AGAIN.to_string())?;
+                .ok_or_else(|| ELY_SIGN_IN_AGAIN.to_string())?;
             refresh(
                 ep,
                 &app.client_id,
@@ -548,7 +551,7 @@ pub(super) fn check(
                 }
             }
             Err(e) => {
-                if e == SIGN_IN_AGAIN {
+                if e == ELY_SIGN_IN_AGAIN {
                     secrets.sign_in_required = true;
                 }
                 return Check::NoAnswer(e, secrets);

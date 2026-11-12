@@ -1,8 +1,7 @@
 # Offline accounts
 
-Horizon's launcher plays with a Microsoft account that owns Minecraft: Java Edition
-([microsoft-account.md](microsoft-account.md)), an ely.by account ([elyby-account.md](elyby-account.md)),
-**or an offline account**: a player name and nothing else. An offline account has no sign-in, no
+Horizon's launcher plays with an ely.by account ([elyby-account.md](elyby-account.md)) **or an
+offline account**: a player name and nothing else. An offline account has no sign-in, no
 token and no ownership check. It plays local worlds and offline-mode servers; online-mode servers
 refuse it.
 
@@ -66,9 +65,9 @@ horizon-launcher account list             # shows "Offline" beside it
 horizon-launcher account select <name>    # play as it
 ```
 
-`account list --json` includes `provider: "offline"`. `account sign-in --for <name>` refuses an
-offline account: there is nothing to sign in to. Add it again with `account offline <name>` to
-change the name.
+`account list --json` includes `provider: "offline"`. Sign-in does not apply to an offline
+account: there is nothing to sign in to. Add it again with `account offline <name>` to change the
+name.
 
 ## Limits
 

@@ -1,9 +1,9 @@
 # ely.by accounts and online play
 
-Horizon's launcher signs players in with a Microsoft account (docs/microsoft-account.md) **or** an
-ely.by account. ely.by is an alternative Minecraft account service: its name, skin and cape come
-along, and it joins online-mode servers that accept ely.by (authlib-injector or the skin system)
-instead of Mojang's session server.
+Horizon's launcher signs players in with an ely.by account, or plays an offline name. This fork
+does not offer Microsoft sign-in (docs/accounts.md). ely.by is an alternative Minecraft account
+service: its name, skin and cape come along, and it joins online-mode servers that accept ely.by
+(authlib-injector or the skin system) instead of Mojang's session server.
 
 ## What has to be registered
 
@@ -81,5 +81,5 @@ or the ely.by skin system.
 
 `horizon-launcher account elyby` opens the same page and prints its link (with `--json`,
 `{"link": "…"}` then `{"signed_in": "<uuid>"}`). `account list` shows each account's provider,
-`account sign-in --for <name>` re-signs an ely.by account in through the same browser flow, and
+running `account elyby` again signs the same ely.by account in through the same browser flow, and
 `account list --json` adds `provider` and `elyby_configured`.

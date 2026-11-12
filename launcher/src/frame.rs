@@ -1,6 +1,6 @@
 //! The glass look's frame (the mockup's `launcher-app.tsx`): the sidebar plate with the
 //! instances, the launcher's update, Sculk's card, Discord and the links; the top bar with the
-//! pages in a glass tab strip, the player, Microsoft sign-in and Settings; and the menus they open.
+//! pages in a glass tab strip, the player and Settings; and the menus they open.
 //! Dark appearance only for now (`docs/design-system.md`, "Glass").
 use super::*;
 use crate::glass_ui::{self as ui, white, Tone};
@@ -604,8 +604,8 @@ impl Launcher {
             .child(foot.relative())
     }
 
-    /// The glass top bar: the pages in a glass strip, then the player, Microsoft sign-in and
-    /// Settings (`px-8 pt-3.5`).
+    /// The glass top bar: the pages in a glass strip, then the player and Settings
+    /// (`px-8 pt-3.5`).
     pub(super) fn glass_topbar(&mut self, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
         let wide = self.window_width >= crate::glass_home::TOP_BAR_WIDE;
@@ -700,35 +700,6 @@ impl Launcher {
             .child(keyboard(chip, &t))
             .children(self.glass_account_menu(cx));
 
-        // Signing in with Microsoft, while nobody is: the mockup's button. A build without
-        // Microsoft sign-in offers ely.by and offline accounts in the account menu instead.
-        let sign_in =
-            (self.accounts.selected().is_none() && account::client_id().is_some()).then(|| {
-                keyboard(
-                    div()
-                        .id("topbar-sign-in")
-                        .relative()
-                        .flex()
-                        .items_center()
-                        .gap(px(10.))
-                        .h(px(44.))
-                        .px(px(16.))
-                        .rounded(px(radius::ROW))
-                        .bg(white(fill::BUTTON))
-                        .hover(|s| s.bg(white(fill::BUTTON_HOVER)))
-                        .cursor_pointer()
-                        .child(microsoft::logo(16.))
-                        .child(
-                            ui::text(14., FontWeight::MEDIUM, ink::FULL)
-                                .child(tr("Sign in with Microsoft")),
-                        )
-                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.start_sign_in();
-                            cx.notify();
-                        })),
-                    &t,
-                )
-            });
         let settings = ui::icon_button(
             "nav-Settings",
             "sliders-horizontal",
@@ -785,7 +756,6 @@ impl Launcher {
                     .gap(px(6.))
                     .children(build_log)
                     .child(account)
-                    .children(sign_in)
                     .child(settings),
             )
     }

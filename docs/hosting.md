@@ -9,8 +9,8 @@ plan are in [server.md](server.md).
 
 - **Online mode checks accounts** (release v2026.10.17.07 and newer). With `online_mode = true`, the
   default, every player joins with their own account, as on a vanilla server: vanilla players signed in with
-  the official Minecraft launcher, Horizon players with the Microsoft account they signed in with in Horizon's
-  launcher ([microsoft-account.md](microsoft-account.md)).
+  the official Minecraft launcher, Horizon players with a Microsoft account already signed in in Horizon's
+  launcher. ely.by and offline accounts join only in offline mode ([accounts.md](accounts.md)).
 - **Names you add are accounts** (release v2026.10.17.14 and newer). `init --player`, `horizon-server
   whitelist add` and `op`, and the console's `whitelist add`, `op` and `ban` look a name up the way vanilla
   does: players already seen (kept in `usercache.json`), then Mojang's profile service. In online mode a name

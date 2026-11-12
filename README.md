@@ -72,7 +72,7 @@ Get **the Horizon launcher** from [playhorizon.dev](https://playhorizon.dev), or
 | macOS, Intel | `horizon-launcher-macos-x64.dmg` | macOS 12 or later |
 | Linux x86-64 | `horizon-launcher-linux-x86_64.AppImage` or `.tar.gz` | a glibc distribution, X11 or Wayland, a GPU with Vulkan or OpenGL 3.3 |
 
-**You also need a Microsoft account that owns Minecraft: Java Edition, an ely.by account, or an offline name.** You sign in with it in the launcher, which plays only with an account that owns the game ([why](docs/microsoft-account.md)); ely.by accounts use their own sign-in and play the servers that accept ely.by ([docs](docs/elyby-account.md)); an offline account is a name and the game's offline UUID, for local worlds and offline-mode servers ([docs](docs/offline-account.md)). Horizon contains no Minecraft code or assets: an existing install (official launcher, Prism, MultiMC...) is reused, and without one the launcher downloads 26.3 from Mojang for your account. Step by step: [Install and first launch](https://playhorizon.dev/docs/install).
+**You also need an ely.by account or an offline name.** This fork's launcher does not offer Microsoft sign-in: add an ely.by account, which plays the servers that accept ely.by ([docs](docs/elyby-account.md)), or an offline account, a name and the game's offline UUID for local worlds and offline-mode servers ([docs](docs/offline-account.md)). How the account gate works: [Accounts](docs/accounts.md). Horizon contains no Minecraft code or assets: an existing install (official launcher, Prism, MultiMC...) is reused, and without one the launcher downloads 26.3 from Mojang. Step by step: [Install and first launch](https://playhorizon.dev/docs/install).
 
 <table>
   <tr>

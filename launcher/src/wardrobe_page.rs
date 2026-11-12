@@ -1258,30 +1258,25 @@ impl Launcher {
         ))
     }
 
-    /// No Microsoft account selected: the way to sign in (the Wardrobe's and the Shop's).
+    /// No account selected: the way to add one (the Wardrobe's and the Shop's).
     fn wardrobe_sign_in(&self, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
-        let sign_in = button(
-            "wardrobe-sign-in",
-            "Sign in with Microsoft",
-            Kind::Primary,
-            &t,
-        )
-        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-            this.go(Page::Settings);
-            this.start_sign_in();
-            cx.notify();
-        }));
+        let accounts = button("wardrobe-sign-in", "Accounts…", Kind::Primary, &t).on_click(
+            cx.listener(|this, _: &ClickEvent, _, cx| {
+                this.go(Page::Settings);
+                cx.notify();
+            }),
+        );
         glass::plate(radius::PANEL)
             .flex()
             .items_center()
             .justify_between()
             .gap(px(16.))
             .p(px(24.))
-            .child(
-                ui::text(15., FontWeight::MEDIUM, ink::FULL).child(tr("Sign in to use cosmetics.")),
-            )
-            .child(sign_in)
+            .child(ui::text(15., FontWeight::MEDIUM, ink::FULL).child(tr(
+                "Add an ely.by account or an offline name to use cosmetics.",
+            )))
+            .child(accounts)
     }
 
     /// Sets whether the pointer turns the view, for its hand.

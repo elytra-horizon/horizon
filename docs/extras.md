@@ -216,10 +216,10 @@ P1 is alone, turning it off restores the normal controller reader. Leaving it on
 alone keeps watching for joins without a compositor.
 
 When Splitscreen is enabled, Play in the launcher also hands over its other signed-in
-Microsoft accounts. They appear first in the profile picker, marked **(Microsoft)**, and
+accounts. They appear first in the profile picker, marked **(Microsoft)**, and
 connect with their own sessions, skins and secure-chat keys. An account whose session is
-unavailable appears as **(Offline)**: sign in again in the launcher and restart the game to
-use it on an online-mode server. Launcher accounts cannot be forgotten from this page.
+unavailable appears as **(Offline)**: sign in again in the launcher (ely.by) or sign out and add
+it again, then restart the game to use it on an online-mode server. Launcher accounts cannot be forgotten from this page.
 
 `HORIZON_SPLIT=N` remains a testing shortcut to enable it and add N-1 players.
 The Setup map previews the monitors, windows and player views. Click a player (its name turns

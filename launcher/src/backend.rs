@@ -2276,8 +2276,8 @@ fn download_for(
         }
         // An owner by its last answer, who can't be asked now.
         Ok(pass) => Err(format!(
-            "\n  • Downloading {v} from Mojang needs your Microsoft account, which could not be \
-             checked: {}",
+            "\n  • Downloading {v} from Mojang needs an account that owns Minecraft, which could \
+             not be checked: {}",
             pass.offline.unwrap_or_default()
         )),
         Err(_) if signed_in => Err(
@@ -2285,8 +2285,8 @@ fn download_for(
                 .into(),
         ),
         Err(_) => Err(format!(
-            "\n  • Or sign in with the Microsoft account that owns Minecraft: Horizon then \
-             downloads {v} from Mojang itself."
+            "\n  • Or choose your own Minecraft install on the Play page: Horizon prepares {v} \
+             from it."
         )),
     }
 }
@@ -3171,7 +3171,8 @@ pub fn client(tag: &str) -> Result<Command, String> {
 }
 
 /// What the command line adds to a refusal to play for want of an account.
-pub const SIGN_IN_HINT: &str = "Sign in with `horizon-launcher account sign-in`.";
+pub const SIGN_IN_HINT: &str = "Add an ely.by account (`horizon-launcher account elyby`) or an \
+offline name (`horizon-launcher account offline <name>`).";
 
 /// [`client`], playing as `who` for this launch only (`play --account`).
 pub fn client_as(tag: &str, who: Option<&str>) -> Result<Command, String> {

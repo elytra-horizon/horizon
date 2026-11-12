@@ -47,22 +47,20 @@ gate guards.
 - The `horizon` brand reply to a Horizon server, for its protocol extensions (`net.rs`).
 - Agent control (`--control`, `horizon-ctl`), controllers, HDR, shader packs.
 
-## Microsoft sign-in in a fork
+## Accounts in a fork
 
-Horizon's Microsoft sign-in runs under one Azure app registration, whose client ID release builds
-read from the repository variable `HORIZON_MSA_CLIENT_ID` (docs/microsoft-account.md). That
-registration, and Mojang's approval of it for the Minecraft services, are for Horizon's own builds
-only. They do not pass to forks, ports or derived launchers, whatever their licence.
+This fork's launcher signs players in with an ely.by account or an offline name, and does not offer
+Microsoft sign-in (docs/accounts.md). ely.by's OAuth2 application belongs to the maintainer: this
+fork's is the public desktop application `elytra-horizon1` (docs/elyby-account.md). The upstream
+Microsoft token code remains only so accounts signed in before this fork can be refreshed or signed
+out; nothing starts a new Microsoft sign-in.
 
-- A fork, port or derived launcher that signs players in registers its own Azure app and applies for
-  its own approval from Mojang/Microsoft (the App ID review in docs/microsoft-account.md).
-- Its builds must not ship, embed, download or otherwise fetch Horizon's client ID, and must not tell
-  players to set `HORIZON_MSA_CLIENT_ID` to it. Sign-ins made with it would appear to Microsoft and
-  Mojang as Horizon's, which the project does not accept.
+- A fork, port or derived launcher that signs players in with ely.by registers its own application,
+  or overrides `HORIZON_ELYBY_CLIENT_ID`, and must not ship, embed or fetch this fork's client ID.
 - The MIT licence covers the code, not the app registration: copying the code gives no right to use
-  Horizon's client ID.
-- Horizon may restrict, rotate or revoke its client ID at any time, which breaks every build that
-  uses it, and reports misuse to Microsoft, Mojang and the hosting platform.
+  another build's OAuth application.
+- The maintainer may restrict, rotate or revoke the application at any time, which breaks every
+  build that uses it.
 
-A build made from source without a client ID of its own says that sign-in is not configured; that is
-the expected state for a fork until its own app is approved.
+A build can disable ely.by sign-in by setting `HORIZON_ELYBY_CLIENT_ID` empty; it then says that
+ely.by is not configured.

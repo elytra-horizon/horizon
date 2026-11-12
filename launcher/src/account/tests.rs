@@ -734,11 +734,11 @@ fn a_no_from_the_services_blocks_at_once() {
     );
     assert_eq!(
         NoOwner::default().to_string(),
-        "Sign in with a Microsoft account that owns Minecraft: Java Edition to play."
+        "No account here can play Minecraft: add an ely.by account or an offline name."
     );
     assert_eq!(
         NoOwner::default().in_window(),
-        "Sign in with a Microsoft account that owns Minecraft: Java Edition to play. Open Settings and sign in under Account."
+        "No account here can play Minecraft: add an ely.by account or an offline name. Open Settings and add one under Account."
     );
 }
 
@@ -2728,7 +2728,7 @@ fn joining_a_service_id_tells_mojangs_session_server() {
     let log = m.lock().unwrap().log.clone();
     let joins: Vec<_> = log.iter().filter(|(_, p, _)| p.contains("/join")).collect();
     assert_eq!(joins.len(), 1);
-    // Mojang refuses: the error says to sign in again.
+    // Mojang refuses: the error says the Microsoft session expired, and what to play with.
     m.lock().unwrap().join_refused = true;
     let refused = session::join_server_with(
         &ep,
@@ -2739,7 +2739,7 @@ fn joining_a_service_id_tells_mojangs_session_server() {
         &nowhere(),
         "svc-42",
     );
-    assert!(refused.unwrap_err().contains("Sign in again"));
+    assert!(refused.unwrap_err().contains("Microsoft session expired"));
 }
 
 /// A launch loads the accounts, asks the services for a while, then saves: a sign-in or sign-out
