@@ -7,31 +7,36 @@ instead of Mojang's session server.
 
 ## What has to be registered
 
-Like Microsoft's Azure application, ely.by's OAuth2 application belongs to the maintainer:
+Like Microsoft's Azure application, ely.by's OAuth2 application belongs to the maintainer. This
+fork's application is already registered as **`elytra-horizon`**: a **public client** with no
+secret, which ely.by requires to use PKCE. Only the redirect URI has to be added:
 
-1. https://account.ely.by/dev/applications/new → **Website**.
+1. https://account.ely.by/dev/applications → the `elytra-horizon` application → **Edit**.
 2. Redirect URI: `http://127.0.0.1:48632/oauth/ely` (the launcher's loopback; a development build
    can use another port with `HORIZON_ELYBY_REDIRECT_URI`).
-3. Copy the **clientId** and **clientSecret**.
-4. Put them in the release build's repository variables `HORIZON_ELYBY_CLIENT_ID` and
-   `HORIZON_ELYBY_CLIENT_SECRET` (read with `option_env!`), or at run time in the same environment
-   variables (empty or unset = ely.by sign-in is not configured).
 
-A desktop application cannot keep a secret; the client secret is only as private as the binary, as
-with every launcher that ships one. The redirect is a loopback, so nothing listens off this
-computer and no other website can receive the code.
+The client ID is the build default (`DEFAULT_ELYBY_CLIENT_ID` in `account.rs`). A release can still
+override it with the repository variable `HORIZON_ELYBY_CLIENT_ID` (read with `option_env!`), or at
+run time with the same variable; setting it to an empty value disables ely.by sign-in. A
+confidential application can also set `HORIZON_ELYBY_CLIENT_SECRET`; public clients leave it unset.
+
+A desktop application cannot keep a secret, and a loopback redirect makes one unnecessary: the code
+only reaches `127.0.0.1` on this computer, and PKCE ties it to the verifier generated for this
+sign-in.
 
 ## Flow (launcher, `account/elyby.rs`)
 
 1. **Authorize**: open
-   `https://account.ely.by/oauth2/v1?client_id=…&redirect_uri=…&response_type=code&scope=account_info%20offline_access%20minecraft_server_session&state=…`.
-   `state` is 16 random bytes; the launcher listens on the redirect's `127.0.0.1` port meanwhile.
+   `https://account.ely.by/oauth2/v1?client_id=…&redirect_uri=…&response_type=code&scope=account_info%20offline_access%20minecraft_server_session&state=…&code_challenge=…&code_challenge_method=S256`.
+   `state` is 16 random bytes; the PKCE verifier is 32 random bytes and the challenge its
+   SHA-256. The launcher listens on the redirect's `127.0.0.1` port meanwhile.
 2. **Code**: the browser comes back to `http://127.0.0.1:48632/oauth/ely?code=…&state=…`; the
    wrong state, an `error`, or no code ends the sign-in. The page answers "you can close this".
 3. **Token**: `POST https://account.ely.by/api/oauth2/v1/token`
-   (`client_id`, `client_secret`, `redirect_uri`, `grant_type=authorization_code`, `code`). The
-   answer's `access_token` is also the Minecraft session token (the `minecraft_server_session`
-   scope), and `refresh_token` renews it (`grant_type=refresh_token` with the same scopes).
+   (`client_id`, `redirect_uri`, `grant_type=authorization_code`, `code`, `code_verifier`). The
+   public client sends no secret; a confidential application adds `client_secret`. The answer's
+   `access_token` is also the Minecraft session token (the `minecraft_server_session` scope), and
+   `refresh_token` renews it (`grant_type=refresh_token` with the same scopes).
 4. **Profile**: `GET https://account.ely.by/api/account/v1/info` (Bearer) → uuid and name;
    `GET https://authserver.ely.by/session/profile/{uuid}` → the `textures` property (base64 JSON)
    → skin URL and model, cape URL. Only `ely.by` and its subdomains are taken.
