@@ -3545,9 +3545,14 @@ fn launcher_asset_running_from(appimage: bool) -> Option<&'static str> {
     }
 }
 
-/// Development builds and `HORIZON_LAUNCHER_NO_SELF_UPDATE` never replace themselves.
+/// This fork's launcher carries ely.by and offline accounts that the upstream releases it checks
+/// for updates do not: replacing itself with one would silently remove them. So a release build
+/// here replaces itself only when `HORIZON_LAUNCHER_ALLOW_SELF_UPDATE` says so, and
+/// `HORIZON_LAUNCHER_NO_SELF_UPDATE` still turns that off. Game updates are not affected.
 pub fn self_update_allowed() -> bool {
-    !cfg!(debug_assertions) && std::env::var_os("HORIZON_LAUNCHER_NO_SELF_UPDATE").is_none()
+    !cfg!(debug_assertions)
+        && std::env::var_os("HORIZON_LAUNCHER_NO_SELF_UPDATE").is_none()
+        && std::env::var_os("HORIZON_LAUNCHER_ALLOW_SELF_UPDATE").is_some()
 }
 
 /// The version in `horizon-launcher --version`'s output (`horizon-launcher 0.1.5`).
