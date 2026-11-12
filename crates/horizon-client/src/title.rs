@@ -4868,7 +4868,7 @@ Would you like to enable the Narrator or visit the Accessibility Settings?",
         static STATUS: OnceLock<AccountStatus> = OnceLock::new();
         static STARTED: AtomicBool = AtomicBool::new(false);
         static QUEUED: AtomicBool = AtomicBool::new(false);
-        let Some(session) = crate::auth::current() else {
+        let Some(session) = crate::auth::current_authenticated() else {
             return;
         };
         if !STARTED.swap(true, Ordering::Relaxed) {

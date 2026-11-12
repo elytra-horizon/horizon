@@ -186,7 +186,7 @@ impl OnlineMode {
     /// friends world authenticates its guests when the host is signed in;
     /// an offline name hosts in offline mode.
     pub fn lan() -> Option<Arc<Self>> {
-        crate::auth::current()?;
+        crate::auth::current_authenticated()?;
         Self::generate(false)
             .map_err(|e| log::warn!("LAN stays in offline mode: {e}"))
             .ok()

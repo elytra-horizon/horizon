@@ -119,6 +119,9 @@ enum AccountCmd {
     /// Sign in with an ely.by account in your browser (OAuth2). It plays online servers that
     /// accept ely.by, with its own name, skin and cape
     Elyby,
+    /// Add an offline account: a name, and the game's offline UUID. It plays offline-mode
+    /// servers, with the skin a player of that name wears
+    Offline { name: String },
     /// Renew an account's session now, even when its access token is still fresh
     Refresh { who: String },
     /// Renew an account's session for a game already running: prints the read-once session file
@@ -1920,8 +1923,9 @@ fn account_command(action: AccountCmd, as_json: bool) -> Result<(), String> {
             } else if accounts.accounts.is_empty() {
                 println!(
                     "No account signed in. Play needs a Microsoft account that owns Minecraft: \
-                     Java Edition (horizon-launcher account sign-in), or an ely.by account \
-                     (horizon-launcher account elyby)"
+                     Java Edition (horizon-launcher account sign-in), an ely.by account \
+                     (horizon-launcher account elyby), or an offline name \
+                     (horizon-launcher account offline <name>)"
                 );
             } else {
                 for a in &accounts.accounts {
@@ -1977,8 +1981,15 @@ fn account_command(action: AccountCmd, as_json: bool) -> Result<(), String> {
         }
         AccountCmd::SignIn { target: Some(who) } => {
             let a = find(&accounts, &who)?;
-            let elyby =
-                account::provider_of(account::store(), &a.uuid) == Some(account::Provider::ElyBy);
+            let provider = account::provider_of(account::store(), &a.uuid);
+            if provider == Some(account::Provider::Offline) {
+                return Err(format!(
+                    "{} is an offline account: there is nothing to sign in to. Add it again \
+                     with `account offline <name>` to change its name.",
+                    a.name
+                ));
+            }
+            let elyby = provider == Some(account::Provider::ElyBy);
             let sign_in = if elyby {
                 account::SignIn::start_elyby_for(a.clone())
             } else {
@@ -2048,6 +2059,27 @@ fn account_command(action: AccountCmd, as_json: bool) -> Result<(), String> {
                 json(serde_json::json!({ "signed_in": signed_in.uuid }));
             } else {
                 println!("Signed in as {}.", signed_in.name);
+            }
+            if let Some(said) = account::no_keychain() {
+                eprintln!("{said}");
+            }
+        }
+        AccountCmd::Offline { name } => {
+            let (account, secrets) = account::offline::create(&account::Endpoints::live(), &name)?;
+            accounts.add(account::store(), account.clone(), &secrets)?;
+            accounts.save()?;
+            if as_json {
+                json(serde_json::json!({
+                    "name": account.name,
+                    "uuid": account.uuid,
+                    "provider": "offline",
+                }));
+            } else {
+                println!(
+                    "Added the offline account {}. It plays offline-mode servers; online-mode \
+                     servers refuse it.",
+                    account.name
+                );
             }
             if let Some(said) = account::no_keychain() {
                 eprintln!("{said}");

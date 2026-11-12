@@ -422,6 +422,16 @@ fn textures(ep: &Endpoints, uuid: &str) -> (Option<(String, String)>, Option<Str
     ) else {
         return (None, None);
     };
+    packed_textures(&v, ely_url)
+}
+
+/// The skin and cape in a session server's `/session/profile/{uuid}` answer, taking only texture
+/// URLs `allowed` accepts. Shared with offline accounts, which look a name up on ely.by and
+/// Mojang for the skin a player of that name wears.
+pub(super) fn packed_textures(
+    v: &Value,
+    allowed: impl Fn(&str) -> bool,
+) -> (Option<(String, String)>, Option<String>) {
     let Some(value) = v
         .get("properties")
         .and_then(Value::as_array)
@@ -440,7 +450,6 @@ fn textures(ep: &Endpoints, uuid: &str) -> (Option<(String, String)>, Option<Str
     let Ok(textures) = serde_json::from_slice::<Value>(&packed) else {
         return (None, None);
     };
-    let allowed = |url: &str| ely_url(url);
     let texture = |kind: &str| {
         textures
             .pointer(&format!("/textures/{kind}/url"))
@@ -461,7 +470,7 @@ fn textures(ep: &Endpoints, uuid: &str) -> (Option<(String, String)>, Option<Str
 }
 
 /// Whether `url` is on ely.by or under it (the `skinDomains` of its authlib-injector document).
-fn ely_url(url: &str) -> bool {
+pub(super) fn ely_url(url: &str) -> bool {
     let rest = url
         .strip_prefix("https://")
         .or_else(|| url.strip_prefix("http://"));

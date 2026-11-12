@@ -17,7 +17,8 @@ impl Launcher {
             .flex_col()
             .gap(px(8.))
             .child(self.glass_microsoft_card(cx))
-            .child(self.glass_elyby_card(cx));
+            .child(self.glass_elyby_card(cx))
+            .child(self.glass_offline_card(cx));
         if wide {
             div()
                 .flex()
@@ -39,6 +40,14 @@ impl Launcher {
     fn glass_who_plays(&self) -> Div {
         let t = self.theme;
         let (uuid, name, status) = match self.accounts.selected() {
+            Some(a) if a.uuid == account::offline::uuid(&a.name) => (
+                Some(a.uuid.clone()),
+                a.name.clone(),
+                (
+                    Tone::Live,
+                    tr("Offline play · local worlds and offline servers"),
+                ),
+            ),
             Some(a) => (
                 Some(a.uuid.clone()),
                 a.name.clone(),
@@ -46,8 +55,11 @@ impl Launcher {
             ),
             None => (
                 None,
-                tr("Sign in with Microsoft").to_string(),
-                (Tone::Off, tr(account::NEEDS_OWNER)),
+                tr("Add an account").to_string(),
+                (
+                    Tone::Off,
+                    tr("Microsoft, ely.by, or an offline name: pick one in Settings."),
+                ),
             ),
         };
         let head = div()
@@ -381,5 +393,163 @@ impl Launcher {
                     .child(detail),
             )
             .children(action.map(|a| div().mt(px(20.)).child(a)))
+    }
+
+    /// The offline card: a name, then Play. The skin of a player of that name is looked up when
+    /// the game starts, and in the launcher for the head.
+    fn glass_offline_card(&mut self, cx: &mut Context<Self>) -> Div {
+        let t = self.theme;
+        let mine = self.sign_in_provider == Some(account::Provider::Offline);
+        let busy = mine
+            && matches!(
+                self.sign_in_state,
+                Some(SignInState::Starting | SignInState::Working(_))
+            );
+        let detail: AnyElement = if mine {
+            match &self.sign_in_state {
+                Some(SignInState::Starting) => div()
+                    .child(tr("Adding the offline account…"))
+                    .into_any_element(),
+                Some(SignInState::Working(_)) => div()
+                    .child(tr("Looking for this player's skin…"))
+                    .into_any_element(),
+                Some(SignInState::Done(Ok(a))) => div()
+                    .child(trf("Playing as {name}.", &[("name", &a.name)]))
+                    .into_any_element(),
+                Some(SignInState::Done(Err(e))) => div()
+                    .text_color(t.danger)
+                    .child(e.clone())
+                    .into_any_element(),
+                _ => div()
+                    .child(tr("Enter a player name and play, no account needed."))
+                    .into_any_element(),
+            }
+        } else {
+            div()
+                .child(tr(
+                    "Play without an account: a name, and the skin of a player who has it. \
+                     Offline-mode servers only.",
+                ))
+                .into_any_element()
+        };
+        let focused = self.offline_focused;
+        let field = div()
+            .id("glass-offline-name")
+            .track_focus(&self.offline_focus)
+            .flex()
+            .items_center()
+            .w_full()
+            .h(px(44.))
+            .px(px(16.))
+            .rounded(px(radius::ROW))
+            .bg(white(if focused { 0.11 } else { 0.07 }))
+            .font_family(horizon_theme::glass::FONT)
+            .text_size(px(14.))
+            .text_color(white(ink::FULL))
+            .cursor_text()
+            .overflow_hidden()
+            .when(focused, |d| d.child(ui::focus_ring(radius::ROW)))
+            .child(line_edit::content(
+                &self.offline_input,
+                &t,
+                focused,
+                false,
+                false,
+                tr("Player name"),
+            ))
+            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                window.focus(&this.offline_focus, cx);
+                cx.notify();
+            }))
+            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
+                match line_edit::handle(&mut this.offline_input, ev, cx) {
+                    line_edit::Key::Pass => return,
+                    line_edit::Key::Enter => this.begin_offline_sign_in(),
+                    line_edit::Key::Escape => window.blur(cx),
+                    _ => {}
+                }
+                cx.stop_propagation();
+                cx.notify();
+            }));
+        let field = line_edit::mouse(field, cx, |this| &mut this.offline_input);
+        let action: Option<AnyElement> = if busy {
+            Some(
+                keyboard(
+                    div()
+                        .id("glass-offline-cancel")
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .h(px(44.))
+                        .w_full()
+                        .rounded(px(radius::ROW))
+                        .bg(white(0.08))
+                        .cursor_pointer()
+                        .hover(|s| s.opacity(0.9))
+                        .font_family(horizon_theme::glass::FONT)
+                        .text_size(px(14.))
+                        .text_color(white(ink::FULL))
+                        .child(tr("Cancel")),
+                    &t,
+                )
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.cancel_sign_in();
+                    cx.notify();
+                }))
+                .into_any_element(),
+            )
+        } else {
+            Some(
+                keyboard(
+                    div()
+                        .id("glass-offline-add")
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .h(px(48.))
+                        .w_full()
+                        .rounded(px(radius::ROW))
+                        .bg(white(0.10))
+                        .border_1()
+                        .border_color(white(0.16))
+                        .cursor_pointer()
+                        .hover(|s| s.opacity(0.9))
+                        .font_family(horizon_theme::glass::FONT)
+                        .text_size(px(15.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(white(ink::FULL))
+                        .child(tr("Add offline account")),
+                    &t,
+                )
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.begin_offline_sign_in();
+                    cx.notify();
+                }))
+                .into_any_element(),
+            )
+        };
+        div()
+            .flex()
+            .flex_col()
+            .rounded(px(16.))
+            .bg(white(0.045))
+            .p(px(24.))
+            .child(
+                div()
+                    .font_family(horizon_theme::glass::DISPLAY_FONT)
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_size(px(20.))
+                    .line_height(px(25.))
+                    .text_color(white(ink::FULL))
+                    .child(tr("Offline account")),
+            )
+            .child(
+                ui::text(14., FontWeight::NORMAL, 0.65)
+                    .mt(px(8.))
+                    .line_height(px(21.7))
+                    .child(detail),
+            )
+            .child(div().mt(px(16.)).child(field))
+            .children(action.map(|a| div().mt(px(12.)).child(a)))
     }
 }

@@ -46,8 +46,14 @@ pub fn texture_uris() -> &'static [String] {
             .flatten()
             .and_then(|doc| discovery_texture_uris(&doc))
             .unwrap_or_else(|| TEXTURE_URIS.map(str::to_owned).to_vec());
-        // An ely.by account's skin and cape live on ely.by (its authlib-injector `skinDomains`).
-        if crate::auth::current().is_some_and(|s| s.provider() == crate::auth::Provider::ElyBy) {
+        // An ely.by account's skin and cape live on ely.by (its authlib-injector `skinDomains`),
+        // and an offline account takes the skin of a player of the same name from there too.
+        if crate::auth::current().is_some_and(|s| {
+            matches!(
+                s.provider(),
+                crate::auth::Provider::ElyBy | crate::auth::Provider::Offline
+            )
+        }) {
             uris.push("http://ely.by/{textureId}".into());
             uris.push("https://ely.by/{textureId}".into());
         }
@@ -181,13 +187,85 @@ pub fn services_profile_textures(profile: &serde_json::Value) -> Textures {
     }
 }
 
-/// The textures of an ely.by `/session/profile/{uuid}` answer: its `textures` property, packed,
-/// unsigned here and only taken from the domains `texture_uris` allows.
-pub fn elyby_profile_textures(profile: &serde_json::Value) -> Textures {
+/// The textures of a session server's `/session/profile/{uuid}` answer (ely.by's, Mojang's): its
+/// `textures` property, packed, unsigned here and only taken from the domains `texture_uris`
+/// allows.
+pub fn session_profile_textures(profile: &serde_json::Value) -> Textures {
     let Some((value, signature)) = parse_profile(profile).textures else {
         return Textures::default();
     };
     unpack(&value, signature, texture_uris())
+}
+
+/// The skin and cape a player named `name` wears, for an offline account: ely.by first (the skin
+/// system this launcher's ely.by accounts use), then Mojang. None when neither knows a player
+/// with that name or a skin: the game draws the default skin. Unsigned lookups, by name only.
+pub fn offline_textures(name: &str) -> Option<Textures> {
+    if let Some(textures) = offline_profile(name).and_then(|p| {
+        let t = session_profile_textures(&p);
+        (t.skin.is_some() || t.cape.is_some()).then_some(t)
+    }) {
+        return Some(textures);
+    }
+    mojang_profile(name).map(|p| session_profile_textures(&p))
+}
+
+/// The `properties` of the profile named `name` (the player an offline account borrows its skin
+/// from), from ely.by or Mojang, and the profile's UUID. Empty when neither knows the name.
+pub fn offline_profile_properties(name: &str) -> Vec<(String, String, Option<String>)> {
+    let profile = offline_profile(name).or_else(|| mojang_profile(name));
+    profile
+        .and_then(|p| {
+            p.get("properties")?
+                .as_array()?
+                .iter()
+                .map(|p| {
+                    Some((
+                        p.get("name")?.as_str()?.to_owned(),
+                        p.get("value")?.as_str()?.to_owned(),
+                        p.get("signature")
+                            .and_then(|s| s.as_str())
+                            .map(str::to_owned),
+                    ))
+                })
+                .collect::<Option<Vec<_>>>()
+        })
+        .unwrap_or_default()
+}
+
+/// The profile ely.by has for `name`.
+fn offline_profile(name: &str) -> Option<serde_json::Value> {
+    let uuid = named_profile(&format!(
+        "{}/api/users/profiles/minecraft/{name}",
+        crate::auth::ELYBY_SERVER
+    ))?;
+    session_profile_json(&format!(
+        "{}/session/profile/{uuid:032x}",
+        crate::auth::ELYBY_SERVER
+    ))
+}
+
+/// The profile Mojang has for `name`.
+fn mojang_profile(name: &str) -> Option<serde_json::Value> {
+    let uuid = named_profile(&format!(
+        "https://api.mojang.com/users/profiles/minecraft/{name}"
+    ))?;
+    session_profile_json(&format!(
+        "https://sessionserver.mojang.com/session/minecraft/profile/{uuid:032x}"
+    ))
+}
+
+/// A name→UUID lookup's `id`, undashed.
+fn named_profile(url: &str) -> Option<u128> {
+    let body = http_get(url)?;
+    let v: serde_json::Value = serde_json::from_slice(&body).ok()?;
+    crate::auth::parse_uuid(v.get("id")?.as_str()?)
+}
+
+/// A session server's profile answer.
+fn session_profile_json(url: &str) -> Option<serde_json::Value> {
+    let body = http_get(url)?;
+    serde_json::from_slice(&body).ok()
 }
 
 /// `profile_skin_url` on a block entity's `profile` NBT (`SkullBlockEntity`):
@@ -800,6 +878,13 @@ fn read_offline_skin(path: &std::path::Path, model: &str) -> Result<(Vec<u8>, bo
 /// `fetchProfile(id, true)`, so its `textures` property is signed), or empty
 /// without an answer. Blocks on the network.
 pub fn fetch_own_properties(id: u128) -> Vec<(String, String, Option<String>)> {
+    if let Some(session) = crate::auth::current()
+        && session.provider() == crate::auth::Provider::Offline
+    {
+        // The offline UUID is nobody's profile: the properties are the ones of the player whose
+        // name this offline account borrows, looked up by name.
+        return offline_profile_properties(&session.name);
+    }
     if crate::auth::current().is_some_and(|s| s.provider() == crate::auth::Provider::ElyBy) {
         // ely.by's session server: the profile's properties (its `textures`), unsigned.
         let url = format!("{}/session/profile/{id:032x}", crate::auth::ELYBY_SERVER);

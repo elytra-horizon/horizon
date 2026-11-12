@@ -6,8 +6,12 @@ impl Launcher {
     /// The chip's two lines: the name that plays, and how.
     pub(super) fn who_plays(&self) -> (String, &'static str) {
         match self.accounts.selected() {
-            Some(a) => (a.name.clone(), tr("Microsoft account")),
-            None => (String::new(), tr("Sign in with Microsoft")),
+            // An offline account is its name's offline UUID: no keychain read is needed to say so.
+            Some(a) if a.uuid == account::offline::uuid(&a.name) => {
+                (a.name.clone(), tr("Offline account"))
+            }
+            Some(a) => (a.name.clone(), tr("Minecraft account")),
+            None => (tr("Add an account").to_string(), tr("No account yet")),
         }
     }
 

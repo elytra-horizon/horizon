@@ -700,33 +700,35 @@ impl Launcher {
             .child(keyboard(chip, &t))
             .children(self.glass_account_menu(cx));
 
-        // Signing in with Microsoft, while nobody is: the mockup's button.
-        let sign_in = self.accounts.selected().is_none().then(|| {
-            keyboard(
-                div()
-                    .id("topbar-sign-in")
-                    .relative()
-                    .flex()
-                    .items_center()
-                    .gap(px(10.))
-                    .h(px(44.))
-                    .px(px(16.))
-                    .rounded(px(radius::ROW))
-                    .bg(white(fill::BUTTON))
-                    .hover(|s| s.bg(white(fill::BUTTON_HOVER)))
-                    .cursor_pointer()
-                    .child(microsoft::logo(16.))
-                    .child(
-                        ui::text(14., FontWeight::MEDIUM, ink::FULL)
-                            .child(tr("Sign in with Microsoft")),
-                    )
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.start_sign_in();
-                        cx.notify();
-                    })),
-                &t,
-            )
-        });
+        // Signing in with Microsoft, while nobody is: the mockup's button. A build without
+        // Microsoft sign-in offers ely.by and offline accounts in the account menu instead.
+        let sign_in =
+            (self.accounts.selected().is_none() && account::client_id().is_some()).then(|| {
+                keyboard(
+                    div()
+                        .id("topbar-sign-in")
+                        .relative()
+                        .flex()
+                        .items_center()
+                        .gap(px(10.))
+                        .h(px(44.))
+                        .px(px(16.))
+                        .rounded(px(radius::ROW))
+                        .bg(white(fill::BUTTON))
+                        .hover(|s| s.bg(white(fill::BUTTON_HOVER)))
+                        .cursor_pointer()
+                        .child(microsoft::logo(16.))
+                        .child(
+                            ui::text(14., FontWeight::MEDIUM, ink::FULL)
+                                .child(tr("Sign in with Microsoft")),
+                        )
+                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                            this.start_sign_in();
+                            cx.notify();
+                        })),
+                    &t,
+                )
+            });
         let settings = ui::icon_button(
             "nav-Settings",
             "sliders-horizontal",
@@ -859,7 +861,7 @@ impl Launcher {
                 &t,
             ));
         }
-        menu = menu.child(div().mt(px(4.)).child(
+        let mut footer = div().mt(px(4.)).child(
             ui::menu_row("account-manage", "user", tr("Manage accounts"), false, &t).on_click(
                 cx.listener(|this, _: &ClickEvent, _, cx| {
                     this.account_menu = false;
@@ -867,7 +869,40 @@ impl Launcher {
                     cx.notify();
                 }),
             ),
-        ));
+        );
+        if account::ely_client().is_some() {
+            footer = footer.child(
+                ui::menu_row(
+                    "account-add-elyby",
+                    "user-add-01",
+                    tr("Sign in with ely.by"),
+                    false,
+                    &t,
+                )
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.account_menu = false;
+                    this.go(Page::Settings);
+                    this.start_elyby_sign_in();
+                    cx.notify();
+                })),
+            );
+        }
+        footer = footer.child(
+            ui::menu_row(
+                "account-add-offline",
+                "user-add-01",
+                tr("Add offline account"),
+                false,
+                &t,
+            )
+            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                this.account_menu = false;
+                this.go(Page::Settings);
+                window.focus(&this.offline_focus, cx);
+                cx.notify();
+            })),
+        );
+        menu = menu.child(footer);
         Some(deferred(
             div().absolute().top(px(52.)).right_0().child(menu),
         ))

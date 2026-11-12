@@ -215,6 +215,7 @@ impl Launcher {
         let answers = div()
             .relative()
             .flex()
+            .flex_wrap()
             .items_center()
             .gap(px(10.))
             .mt(px(14.))
@@ -224,6 +225,19 @@ impl Launcher {
                     .child(shell::label(tr("Not now").to_string()))
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                         this.close_owner_screen();
+                        cx.notify();
+                    })),
+            )
+            // Not everyone has a Microsoft account that owns the game: ely.by and offline
+            // accounts are in Settings, so this screen never dead-ends.
+            .child(
+                shell::action("owner-other-accounts", shell::Action::Quiet, &t)
+                    .child(shell::label(
+                        tr("Use an ely.by or offline account").to_string(),
+                    ))
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.close_owner_screen();
+                        this.go(Page::Settings);
                         cx.notify();
                     })),
             );
@@ -470,14 +484,31 @@ impl Launcher {
                 this.close_owner_screen();
                 cx.notify();
             }));
+        // Not everyone has a Microsoft account that owns the game: ely.by and offline accounts
+        // are in Settings, so this screen never dead-ends.
+        let other = ui::button(
+            "owner-other-accounts".into(),
+            tr("Use an ely.by or offline account").into(),
+            Kind::Ghost,
+            &t,
+        )
+        .h(px(44.))
+        .px(px(20.))
+        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+            this.close_owner_screen();
+            this.go(Page::Settings);
+            cx.notify();
+        }));
         card = card.child(
             div()
                 .flex()
+                .flex_wrap()
                 .items_center()
                 .gap(px(8.))
                 .mt(px(24.))
                 .children(main)
-                .child(later),
+                .child(later)
+                .child(other),
         );
         if matches!(state, Shown::Code(..)) {
             card = card.child(

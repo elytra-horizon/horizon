@@ -54,7 +54,7 @@ fn send_emote(
     kept: &std::sync::Mutex<horizon_cosmetics::account::Kept>,
     emote: Option<&str>,
 ) -> Result<(), String> {
-    let Some(session) = horizon_client::auth::current() else {
+    let Some(session) = horizon_client::auth::current_authenticated() else {
         return Ok(());
     };
     let mut kept = kept
@@ -73,7 +73,7 @@ fn send_emote(
 fn load_owned_emotes(
     kept: &std::sync::Mutex<horizon_cosmetics::account::Kept>,
 ) -> Result<Vec<horizon_cosmetics::account::OwnedEmote>, String> {
-    let Some(session) = horizon_client::auth::current() else {
+    let Some(session) = horizon_client::auth::current_authenticated() else {
         return Ok(Vec::new());
     };
     let service = http();
@@ -116,7 +116,7 @@ fn account() -> Option<(
     String,
     std::path::PathBuf,
 )> {
-    let session = horizon_client::auth::current()?;
+    let session = horizon_client::auth::current_authenticated()?;
     let uuid = format!("{:032x}", session.uuid);
     Some((session, uuid, std::env::current_dir().ok()?))
 }
@@ -197,7 +197,7 @@ impl AccountSync {
 /// Tells the service whether the signed-in account may be shown as a Horizon player (listed: it
 /// plays now). An offline account has nothing to send.
 fn send_listed(listed: bool) -> Result<(), String> {
-    let Some(session) = horizon_client::auth::current() else {
+    let Some(session) = horizon_client::auth::current_authenticated() else {
         return Ok(());
     };
     horizon_cosmetics::account::set_listed(
@@ -907,7 +907,7 @@ impl Game<'_> {
         let e = &mut self.cosmetics.emotes;
         if self.cosmetics.local
             || !enabled()
-            || horizon_client::auth::current().is_none()
+            || horizon_client::auth::current_authenticated().is_none()
             || e.loading.is_some()
             || e.loaded.is_some_and(|at| at.elapsed() < AGAIN)
         {

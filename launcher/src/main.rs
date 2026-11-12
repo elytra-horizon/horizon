@@ -412,6 +412,10 @@ struct Launcher {
     proxy_input: line_edit::LineEdit,
     proxy_focused: bool,
     proxy_focus: FocusHandle,
+    /// The Account page's Offline name field: a name, then Play.
+    offline_input: line_edit::LineEdit,
+    offline_focused: bool,
+    offline_focus: FocusHandle,
     /// Opt-in data collection: the player's answer and Settings' section (`collection`).
     collection: collection::Collection,
     /// Settings' "Connect an AI agent" (`agents_page`).
@@ -660,6 +664,9 @@ impl Launcher {
             ),
             proxy_focused: false,
             proxy_focus: cx.focus_handle(),
+            offline_input: line_edit::LineEdit::new(String::new(), 16, 20),
+            offline_focused: false,
+            offline_focus: cx.focus_handle(),
             settings,
             settings_save_error: None,
             links: backend::Links::default(),
@@ -1594,6 +1601,9 @@ impl Launcher {
                 if let SignInState::Done(Ok(ref account)) = state {
                     self.auth_busy.remove(&account.uuid);
                     self.sign_in_target = None;
+                    if self.sign_in_provider == Some(account::Provider::Offline) {
+                        self.offline_input.set(String::new());
+                    }
                     self.accounts = Accounts::load();
                     self.load_profile_heads();
                     self.load_auth_statuses(false);
@@ -2059,6 +2069,22 @@ impl Launcher {
         self.sign_in_target = target;
         self.sign_in_state = Some(SignInState::Starting);
         self.sign_in_provider = Some(account::Provider::ElyBy);
+    }
+
+    /// Adds the name in the Offline field: the game's offline UUID, and the skin a player of
+    /// that name wears when ely.by or Mojang knows one.
+    fn begin_offline_sign_in(&mut self) {
+        let name = self.offline_input.text().trim().to_owned();
+        self.cancel_sign_in();
+        self.sign_in_provider = Some(account::Provider::Offline);
+        if let Err(e) = account::offline::validate_name(&name) {
+            self.sign_in_state = Some(SignInState::Done(Err(e)));
+            self.sign_in_provider = Some(account::Provider::Offline);
+            return;
+        }
+        self.sign_in = Some(SignIn::start_offline(&name));
+        self.sign_in_target = None;
+        self.sign_in_state = Some(SignInState::Starting);
     }
 
     fn begin_sign_in(&mut self, target: Option<account::Account>) {
@@ -4442,11 +4468,29 @@ impl Launcher {
             action,
             &t,
         ));
+        n += 1;
+        let (title, detail, action) = self.elyby_parts(cx);
+        rows = rows.child(index_row(
+            n,
+            title,
+            Some(detail.into_any_element()),
+            action,
+            &t,
+        ));
+        n += 1;
+        let (title, detail, action) = self.offline_parts(cx);
+        rows = rows.child(index_row(
+            n,
+            title,
+            Some(detail.into_any_element()),
+            action,
+            &t,
+        ));
         (rows, n)
     }
 
-    /// The Microsoft accounts signed in here: each one's head, name and state, Play as,
-    /// Refresh and Sign out.
+    /// The accounts signed in here: each one's head, name and state, Play as, Refresh and Sign
+    /// out (an offline account has no sign-in to refresh).
     fn microsoft_rows(&mut self, cx: &mut Context<Self>) -> (Div, usize) {
         let t = self.theme;
         let mut rows = div().flex().flex_col();
@@ -4454,9 +4498,11 @@ impl Launcher {
         let selected = self.accounts.selected.clone();
         for (i, a) in self.accounts.accounts.clone().into_iter().enumerate() {
             let plays = selected.as_ref() == Some(&a.uuid);
+            // An offline account is its name's offline UUID: no keychain, no renewal.
+            let offline = a.uuid == account::offline::uuid(&a.name);
             let uuid = a.uuid.clone();
             let mut actions = div().flex().gap(px(4.));
-            if plays {
+            if plays && !offline {
                 actions = actions.child(
                     button(format!("offline-{i}"), "Play offline", Kind::Ghost, &t).on_click(
                         cx.listener(|this, _: &ClickEvent, _, cx| {
@@ -4469,7 +4515,7 @@ impl Launcher {
                         }),
                     ),
                 );
-            } else {
+            } else if !plays {
                 let uuid = uuid.clone();
                 actions = actions.child(
                     button(format!("select-{i}"), "Play as", Kind::Secondary, &t).on_click(
@@ -4511,18 +4557,20 @@ impl Launcher {
                 Kind::Ghost,
                 &t,
             );
-            actions = actions.child(if busy {
-                disabled(refresh)
-            } else {
-                refresh.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    if needs_sign_in {
-                        this.re_sign_in(&refresh_id);
-                    } else {
-                        this.refresh_account(refresh_id.clone());
-                    }
-                    cx.notify();
-                }))
-            });
+            if !offline {
+                actions = actions.child(if busy {
+                    disabled(refresh)
+                } else {
+                    refresh.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        if needs_sign_in {
+                            this.re_sign_in(&refresh_id);
+                        } else {
+                            this.refresh_account(refresh_id.clone());
+                        }
+                        cx.notify();
+                    }))
+                });
+            }
             let sign_out = button(format!("sign-out-{i}"), "Sign out", Kind::Ghost, &t);
             actions = actions.child(if busy {
                 disabled(sign_out)
@@ -4549,12 +4597,19 @@ impl Launcher {
                 }))
             });
             n += 1;
+            let how = if plays {
+                "Plays"
+            } else if offline {
+                "Offline"
+            } else {
+                "Signed in"
+            };
             rows = rows.child(account_row(
                 Some(self.profile_heads.draw(Some(&a.uuid), 32., self.scale, &t)),
                 a.name.clone(),
                 Some(
                     div()
-                        .child(tr(if plays { "Plays" } else { "Signed in" }))
+                        .child(tr(how))
                         .child(account_status_line(status, progress, &t))
                         .when(!busy, |row| {
                             row.when_some(status.filter(|s| s.message != s.label()), |row, s| {
@@ -4574,9 +4629,14 @@ impl Launcher {
     /// happening (the code to enter, a problem), and its buttons.
     fn sign_in_parts(&self, cx: &mut Context<Self>) -> (String, Div, Option<AnyElement>) {
         let t = self.theme;
-        let configured = account::client_id().is_some() || account::ely_client().is_some();
+        let configured = account::client_id().is_some();
+        // The Microsoft card says nothing about ely.by's or an offline sign-in.
+        let state = match self.sign_in_provider {
+            Some(p) if p != account::Provider::Microsoft => None,
+            _ => self.sign_in_state.as_ref(),
+        };
         let busy = matches!(
-            self.sign_in_state,
+            state,
             Some(
                 SignInState::Starting
                     | SignInState::Code(_)
@@ -4584,7 +4644,7 @@ impl Launcher {
                     | SignInState::Working(_)
             )
         );
-        let detail = match &self.sign_in_state {
+        let detail = match state {
             _ if !configured => div().child(tr(account::NOT_CONFIGURED)),
             Some(SignInState::Starting) => div().child(match self.sign_in_provider {
                 Some(account::Provider::ElyBy) => tr("Asking ely.by…"),
@@ -4664,7 +4724,7 @@ impl Launcher {
         };
         let action = if !configured {
             None
-        } else if let Some(SignInState::Browser(url)) = &self.sign_in_state {
+        } else if let Some(SignInState::Browser(url)) = state {
             let uri = url.clone();
             Some(
                 div()
@@ -4684,7 +4744,7 @@ impl Launcher {
                     )
                     .into_any_element(),
             )
-        } else if let Some(SignInState::Code(code)) = &self.sign_in_state {
+        } else if let Some(SignInState::Code(code)) = state {
             let (uri, user_code) = (code.verification_uri.clone(), code.user_code.clone());
             let (private_uri, link_uri) = (uri.clone(), uri.clone());
             // A private window picks the account; without one the link is for the player to carry over.
@@ -4778,6 +4838,151 @@ impl Launcher {
             None => tr("Another account").to_owned(),
         };
         (title, detail, action)
+    }
+
+    /// Settings' ely.by row: signing in opens ely.by's page in the browser.
+    fn elyby_parts(&self, cx: &mut Context<Self>) -> (String, Div, Option<AnyElement>) {
+        let t = self.theme;
+        let configured = account::ely_client().is_some();
+        let mine = self.sign_in_provider == Some(account::Provider::ElyBy);
+        let state = if mine {
+            self.sign_in_state.as_ref()
+        } else {
+            None
+        };
+        let busy = matches!(
+            state,
+            Some(SignInState::Starting | SignInState::Browser(_) | SignInState::Working(_))
+        );
+        let detail = match state {
+            _ if !configured => div().child(tr(account::ELY_NOT_CONFIGURED)),
+            Some(SignInState::Starting) => div().child(tr("Opening ely.by…")),
+            Some(SignInState::Browser(_)) => {
+                div().child(tr("Finish signing in to ely.by in your browser."))
+            }
+            Some(SignInState::Working(phase)) => div().child(tr(phase.label())),
+            Some(SignInState::Done(Ok(a))) => {
+                div().child(trf("Signed in as {name}.", &[("name", &a.name)]))
+            }
+            Some(SignInState::Done(Err(e))) => div().text_color(t.danger).child(e.clone()),
+            None => div().child(tr(
+                "Another Minecraft account service: its skins, capes and the online servers \
+                 that accept it.",
+            )),
+            _ => div().child(tr("Add an ely.by account.")),
+        };
+        let action = if !configured {
+            None
+        } else if busy {
+            Some(
+                button("elyby-cancel", "Cancel", Kind::Ghost, &t)
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.cancel_sign_in();
+                        cx.notify();
+                    }))
+                    .into_any_element(),
+            )
+        } else {
+            Some(
+                button("elyby-sign-in", "Sign in with ely.by", Kind::Secondary, &t)
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.start_elyby_sign_in();
+                        cx.notify();
+                    }))
+                    .into_any_element(),
+            )
+        };
+        (tr("ely.by").to_string(), detail, action)
+    }
+
+    /// Settings' Offline account row: a name field and Add, no password or page.
+    fn offline_parts(&self, cx: &mut Context<Self>) -> (String, Div, Option<AnyElement>) {
+        let t = self.theme;
+        let mine = self.sign_in_provider == Some(account::Provider::Offline);
+        let state = if mine {
+            self.sign_in_state.as_ref()
+        } else {
+            None
+        };
+        let busy = matches!(state, Some(SignInState::Starting | SignInState::Working(_)));
+        let detail = match state {
+            Some(SignInState::Starting) => div().child(tr("Adding the offline account…")),
+            Some(SignInState::Working(_)) => div().child(tr("Looking for this player's skin…")),
+            Some(SignInState::Done(Ok(a))) => {
+                div().child(trf("Playing as {name}.", &[("name", &a.name)]))
+            }
+            Some(SignInState::Done(Err(e))) => div().text_color(t.danger).child(e.clone()),
+            _ => div().child(tr(
+                "A name, and the skin of a player who has it. Offline-mode servers only: no \
+                 account, no password.",
+            )),
+        };
+        let action =
+            if busy {
+                Some(
+                    button("offline-cancel", "Cancel", Kind::Ghost, &t)
+                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                            this.cancel_sign_in();
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                )
+            } else {
+                let focused = self.offline_focused;
+                let field = div()
+                    .id("offline-name")
+                    .track_focus(&self.offline_focus)
+                    .flex()
+                    .items_center()
+                    .w(px(190.))
+                    .h(px(30.))
+                    .px(px(12.))
+                    .overflow_hidden()
+                    .border_2()
+                    .border_color(if focused { t.accent } else { t.outline })
+                    .bg(t.well)
+                    .font_family(theme::MONO)
+                    .text_size(px(12.))
+                    .cursor_text()
+                    .child(line_edit::content(
+                        &self.offline_input,
+                        &t,
+                        focused,
+                        false,
+                        false,
+                        tr("Player name"),
+                    ))
+                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                        window.focus(&this.offline_focus, cx);
+                        cx.notify();
+                    }))
+                    .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
+                        match line_edit::handle(&mut this.offline_input, ev, cx) {
+                            line_edit::Key::Pass => return,
+                            line_edit::Key::Enter => this.begin_offline_sign_in(),
+                            line_edit::Key::Escape => window.blur(cx),
+                            _ => {}
+                        }
+                        cx.stop_propagation();
+                        cx.notify();
+                    }));
+                let field = line_edit::mouse(field, cx, |this| &mut this.offline_input);
+                Some(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(4.))
+                        .child(field)
+                        .child(button("offline-add", "Add", Kind::Secondary, &t).on_click(
+                            cx.listener(|this, _: &ClickEvent, _, cx| {
+                                this.begin_offline_sign_in();
+                                cx.notify();
+                            }),
+                        ))
+                        .into_any_element(),
+                )
+            };
+        (tr("Offline account").to_string(), detail, action)
     }
 
     /// Join a friend: a code field and Join, which starts the game straight

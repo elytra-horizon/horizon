@@ -6,6 +6,10 @@
 //! reads once (`--session-file`), never on its command line. Tokens never reach logs, errors or
 //! output.
 //!
+//! Offline accounts ([`offline`], docs/offline-account.md) are a name and nothing else: the
+//! game's offline UUID, no service, no ownership question. They play offline-mode servers, and
+//! the client looks the name up on ely.by and Mojang for a skin.
+//!
 //! ely.by accounts (docs/elyby-account.md) sign in through ely.by's OAuth2 page in the browser
 //! ([`SignIn::start_elyby`]); their token is the Minecraft session token and the owner gate is
 //! satisfied by the account itself.
@@ -22,6 +26,7 @@
 pub mod session;
 
 mod elyby;
+pub mod offline;
 
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -117,6 +122,8 @@ pub enum Provider {
     #[default]
     Microsoft,
     ElyBy,
+    /// A name only, with the game's offline UUID: no service behind it.
+    Offline,
 }
 
 impl Provider {
@@ -124,7 +131,13 @@ impl Provider {
         match self {
             Self::Microsoft => "Microsoft",
             Self::ElyBy => "ely.by",
+            Self::Offline => "Offline",
         }
+    }
+
+    /// Whether the account has a session service (an offline one never contacts one).
+    pub fn online(self) -> bool {
+        self != Self::Offline
     }
 }
 
@@ -141,6 +154,10 @@ pub struct Endpoints {
     pub ely_account: String,
     /// authserver.ely.by: ely.by's Yggdrasil authentication and session server.
     pub ely_auth: String,
+    /// api.mojang.com: a name's UUID (an offline account looking for that player's skin).
+    pub mojang: String,
+    /// sessionserver.mojang.com: a profile's textures.
+    pub mojang_session: String,
 }
 
 impl Endpoints {
@@ -158,6 +175,8 @@ impl Endpoints {
             minecraft: "https://api.minecraftservices.com".into(),
             ely_account: "https://account.ely.by".into(),
             ely_auth: "https://authserver.ely.by".into(),
+            mojang: "https://api.mojang.com".into(),
+            mojang_session: "https://sessionserver.mojang.com".into(),
         }
     }
 }
@@ -707,6 +726,10 @@ fn check_with(
 ) -> Check {
     if secrets.provider == Provider::ElyBy {
         return elyby::check(ep, account, secrets, force, progress);
+    }
+    if secrets.provider == Provider::Offline {
+        // Nothing to ask: an offline account is the name and the game's offline UUID.
+        return Check::Owns(account.clone(), secrets);
     }
     if secrets.sign_in_required {
         return Check::NoAnswer(SIGN_IN_AGAIN.into(), secrets);
@@ -2235,11 +2258,19 @@ pub fn write_session_file(
         "name": account.name,
         "uuid": account.uuid,
         "access_token": secrets.minecraft_token,
-        "user_type": if secrets.is_elyby() { "mojang" } else { "msa" },
+        "user_type": match secrets.provider {
+            Provider::Microsoft => "msa",
+            Provider::ElyBy => "mojang",
+            Provider::Offline => "legacy",
+        },
         "xuid": secrets.xuid,
     });
-    if secrets.is_elyby() {
-        body["provider"] = json!("elyby");
+    if secrets.provider != Provider::Microsoft {
+        body["provider"] = json!(match secrets.provider {
+            Provider::ElyBy => "elyby",
+            Provider::Offline => "offline",
+            Provider::Microsoft => unreachable!(),
+        });
     }
     std::io::Write::write_all(&mut file, body.to_string().as_bytes()).map_err(|e| e.to_string())?;
     Ok(path)
@@ -2381,6 +2412,41 @@ impl SignIn {
     /// Sign this exact ely.by account in again (another account is refused).
     pub fn start_elyby_for(account: Account) -> Self {
         Self::start_elyby_expected(Some(account))
+    }
+
+    /// Add an offline account: the name, the game's offline UUID, and the skin a player of that
+    /// name wears when either skin service knows one.
+    pub fn start_offline(name: &str) -> Self {
+        use std::sync::atomic::Ordering;
+        let state = std::sync::Arc::new(Mutex::new(SignInState::Starting));
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (thread_state, thread_cancel) = (state.clone(), cancel.clone());
+        let name = name.to_owned();
+        std::thread::spawn(move || {
+            let set = |s| *thread_state.lock().unwrap() = s;
+            let result = (|| {
+                set(SignInState::Working(session::Phase::Profile));
+                let (account, secrets) = offline::create(&Endpoints::live(), &name)?;
+                let store = store();
+                let _operation = session::lock(store)?;
+                let mut accounts = Accounts::load();
+                let progress = |phase| set(SignInState::Working(phase));
+                accept_sign_in(
+                    &mut accounts,
+                    store,
+                    None,
+                    account.clone(),
+                    &secrets,
+                    &|| thread_cancel.load(Ordering::Relaxed),
+                    &progress,
+                )?;
+                progress(session::Phase::Saving);
+                accounts.save()?;
+                Ok(account)
+            })();
+            set(SignInState::Done(result));
+        });
+        Self { state, cancel }
     }
 
     fn start_elyby_expected(expected: Option<Account>) -> Self {

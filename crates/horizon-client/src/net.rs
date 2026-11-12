@@ -829,6 +829,9 @@ fn run(
     .map_err(e)?;
     // Vanilla's login sends the account's profile id, or the offline one.
     let uuid = auth.map_or_else(|| offline_uuid(name), |a| a.uuid);
+    // An offline account has no session service to vouch for it: an online-mode server asks
+    // Mojang and finds nothing. Treat it as no sign-in, as vanilla does for an offline name.
+    let auth = auth.filter(|a| a.authenticated());
     c.send(
         &login::Serverbound::Hello(login::ServerHello {
             name: name.to_owned(),

@@ -87,12 +87,16 @@ impl Status {
             None => State::SignInRequired,
             Some(s) if s.sign_in_required => State::SignInRequired,
             Some(s) if !s.owns => State::OwnershipRequired,
+            // An offline account has nothing to renew, and no token that could expire.
+            Some(s) if s.provider == Provider::Offline => State::Ready,
             Some(s) if s.minecraft_expires_at <= now() + RENEW_BEFORE => State::NeedsRefresh,
             Some(_) => State::Ready,
         };
         let mut status = Self {
             state,
-            expires_at: secrets.map(|s| s.minecraft_expires_at),
+            expires_at: secrets
+                .filter(|s| s.provider != Provider::Offline)
+                .map(|s| s.minecraft_expires_at),
             message: String::new(),
         };
         status.message = match state {
@@ -407,6 +411,9 @@ pub(super) fn join_server_with(
     let url = match secrets.provider {
         Provider::ElyBy => format!("{}/session/join", ep.ely_auth),
         Provider::Microsoft => format!("{session}/session/minecraft/join"),
+        Provider::Offline => {
+            return Err("An offline account can't join an online-mode server.".into());
+        }
     };
     match send(
         request_to("POST", &url),

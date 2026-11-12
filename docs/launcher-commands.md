@@ -156,6 +156,24 @@ Sign in with a Microsoft account in your browser (device code). Play needs one t
 
 MCP: `account_sign_in`.
 
+## `horizon-launcher account elyby`
+
+Sign in with an ely.by account in your browser (OAuth2). It plays online servers that accept ely.by, with its own name, skin and cape.
+
+    horizon-launcher account elyby
+
+MCP: none: the page opens in the player's browser.
+
+## `horizon-launcher account offline`
+
+Add an offline account: a name, and the game's offline UUID. It plays offline-mode servers, with the skin a player of that name wears.
+
+    horizon-launcher account offline <NAME>
+
+- `NAME`
+
+MCP: none: an account change the player makes in the launcher.
+
 ## `horizon-launcher account refresh`
 
 Renew an account's session now, even when its access token is still fresh.

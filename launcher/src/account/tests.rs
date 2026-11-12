@@ -7,6 +7,7 @@ use std::net::TcpListener;
 use std::sync::Arc;
 
 const UUID: &str = "069a79f444e94726a5befca90e38aaf5";
+const ALEX_UUID: &str = "11111111111111111111111111111111";
 
 /// What the mock answers and what it was asked.
 #[derive(Default)]
@@ -181,6 +182,27 @@ fn route(mock: &mut Mock, method: &str, path: &str, auth: &str, body: &str) -> (
                 json!({"id": UUID, "name": "Notch", "properties": [{"name": "textures", "value": value}]}),
             )
         }
+        // An offline account's skin: ely.by knows Notch, Mojang knows Alex.
+        ("GET", "/ely/auth/api/users/profiles/minecraft/Notch") => {
+            reply(200, json!({"id": UUID, "name": "Notch"}))
+        }
+        ("GET", "/mojang/users/profiles/minecraft/Alex") => {
+            reply(200, json!({"id": ALEX_UUID, "name": "Alex"}))
+        }
+        ("GET", path)
+            if path == format!("/mojang/session/session/minecraft/profile/{ALEX_UUID}") =>
+        {
+            let textures = json!({
+                "textures": {
+                    "SKIN": {"url": "https://textures.minecraft.net/texture/alex"},
+                }
+            });
+            let value = base64::engine::general_purpose::STANDARD.encode(textures.to_string());
+            reply(
+                200,
+                json!({"id": ALEX_UUID, "name": "Alex", "properties": [{"name": "textures", "value": value}]}),
+            )
+        }
         _ => reply(404, json!({"error": "NotFound"})),
     }
 }
@@ -243,6 +265,8 @@ fn serve(mock: Arc<Mutex<Mock>>) -> Endpoints {
         minecraft: format!("{base}/mc"),
         ely_account: format!("{base}/ely/account"),
         ely_auth: format!("{base}/ely/auth"),
+        mojang: format!("{base}/mojang"),
+        mojang_session: format!("{base}/mojang/session"),
     }
 }
 
@@ -381,6 +405,8 @@ fn offline() -> Endpoints {
         minecraft: "http://127.0.0.1:9/mc".into(),
         ely_account: "http://127.0.0.1:9/ely/account".into(),
         ely_auth: "http://127.0.0.1:9/ely/auth".into(),
+        mojang: "http://127.0.0.1:9/mojang".into(),
+        mojang_session: "http://127.0.0.1:9/mojang/session".into(),
     }
 }
 
@@ -1189,6 +1215,61 @@ fn only_the_typed_macos_removed_executable_failure_gets_the_restart_message() {
         write_error(keyring::Error::NoEntry),
         keyring::Error::NoEntry.to_string()
     );
+}
+
+#[test]
+fn offline_accounts_get_the_games_uuid_and_pass_the_owner_gate() {
+    let (_, ep) = mock(|_| {});
+    let (account, secrets) = offline::create(&ep, "Notch").unwrap();
+    assert_eq!(account.uuid, offline::uuid("Notch"));
+    assert_eq!(account.name, "Notch");
+    // The skin is the one the player named Notch wears, from ely.by first.
+    assert_eq!(
+        account.skin,
+        Some(("http://ely.by/storage/skins/abc.png".into(), "slim".into()))
+    );
+    assert_eq!(
+        account.cape.as_deref(),
+        Some("https://ely.by/storage/capes/cape.png")
+    );
+    assert_eq!(secrets.provider, Provider::Offline);
+    assert!(secrets.owns);
+    // Play starts the game for it without asking any service.
+    let store = MemoryStore::default();
+    let mut accounts = Accounts::default();
+    accounts.add(&store, account.clone(), &secrets).unwrap();
+    let pass = launch_for_game(&ep, None, &store, &mut accounts).unwrap();
+    assert!(pass.session.is_some());
+    assert!(pass.offline.is_none());
+}
+
+#[test]
+fn offline_skins_fall_back_to_mojang_when_elyby_has_no_such_name() {
+    let (_, ep) = mock(|_| {});
+    let (account, _) = offline::create(&ep, "Alex").unwrap();
+    assert_eq!(account.uuid, offline::uuid("Alex"));
+    assert_eq!(
+        account.skin,
+        Some((
+            "https://textures.minecraft.net/texture/alex".into(),
+            "classic".into()
+        ))
+    );
+}
+
+#[test]
+fn offline_session_files_say_legacy_and_offline() {
+    let dir = std::env::temp_dir().join(format!("horizon-offline-session-{}", std::process::id()));
+    let (_, ep) = mock(|_| {});
+    let (account, secrets) = offline::create(&ep, "Notch").unwrap();
+    let path = write_session_file(&dir, &account, &secrets).unwrap();
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(v["user_type"], "legacy");
+    assert_eq!(v["provider"], "offline");
+    // No session the services would accept: the game must send it nowhere.
+    assert_eq!(v["access_token"], "0");
+    assert_eq!(v["uuid"], offline::uuid("Notch"));
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -2587,6 +2668,8 @@ fn splitscreen_stops_renewing_other_accounts_once_out_of_time() {
         minecraft: url,
         ely_account: "http://127.0.0.1:9/ely/account".into(),
         ely_auth: "http://127.0.0.1:9/ely/auth".into(),
+        mojang: "http://127.0.0.1:9/mojang".into(),
+        mojang_session: "http://127.0.0.1:9/mojang/session".into(),
     };
     let store = MemoryStore::default();
     let mut accounts = signed_in(&store, &secrets("mc-token", true));

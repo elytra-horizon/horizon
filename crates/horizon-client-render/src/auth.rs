@@ -23,6 +23,8 @@ pub enum Provider {
     #[default]
     Microsoft,
     ElyBy,
+    /// A name and the game's offline UUID, with no service behind them.
+    Offline,
 }
 
 /// A signed-in account (vanilla's User with type msa, or an ely.by one).
@@ -71,6 +73,12 @@ impl AuthSession {
         self.provider
     }
 
+    /// Whether a session service can vouch for this account. An offline account has none: online
+    /// mode servers will refuse it, and no Mojang service may be asked about it.
+    pub fn authenticated(&self) -> bool {
+        self.provider != Provider::Offline
+    }
+
     /// The session file's JSON: {"name", "uuid", "access_token", "user_type", "xuid"} and, for
     /// an ely.by account, "provider": "elyby" (user_type "mojang").
     pub fn parse(text: &str) -> Result<Self, String> {
@@ -80,6 +88,7 @@ impl AuthSession {
         let provider = match field("provider") {
             None | Some("microsoft") => Provider::Microsoft,
             Some("elyby") => Provider::ElyBy,
+            Some("offline") => Provider::Offline,
             Some(other) => return Err(format!("the session's provider is not known ({other})")),
         };
         let name = field("name").ok_or("the session has no name")?;
@@ -98,6 +107,9 @@ impl AuthSession {
             }
             (Provider::ElyBy, Some(t)) if t != "mojang" && t != "msa" => {
                 return Err("the session is not an ely.by account session".into());
+            }
+            (Provider::Offline, Some(t)) if t != "legacy" && t != "mojang" && t != "msa" => {
+                return Err("the session is not an offline account session".into());
             }
             _ => {}
         }
@@ -140,6 +152,10 @@ impl AuthSession {
     /// service would refuse it. A token that doesn't read as a JWT counts as good: the server
     /// says.
     pub fn expired(&self) -> bool {
+        // An offline account has no token to expire.
+        if self.provider == Provider::Offline {
+            return false;
+        }
         let exp = self
             .access_token
             .split('.')
@@ -162,6 +178,13 @@ pub fn set_current(session: AuthSession) {
 }
 pub fn current() -> Option<Arc<AuthSession>> {
     CURRENT.get().cloned()
+}
+
+/// The account this game runs as, when a session service can vouch for it: what online
+/// services (Mojang's, and Horizon's cosmetics) may be asked about. An offline account is never
+/// returned; the game still plays as it, with its name and offline UUID.
+pub fn current_authenticated() -> Option<Arc<AuthSession>> {
+    current().filter(|s| s.authenticated())
 }
 
 /// Why joining a server through the session service failed, like the
@@ -267,8 +290,9 @@ pub fn endpoint(doc: &serde_json::Value, service: &str, name: &str) -> Option<St
 /// to no actions, as vanilla does. Blocks: call it off the main thread.
 pub fn fetch_account_status(session: &AuthSession) -> crate::ban_notice::AccountStatus {
     use crate::ban_notice::{AccountStatus, parse_profile_actions, parse_properties};
-    // ely.by has no Mojang player service here: no bans, no chat actions to show.
-    if session.provider == Provider::ElyBy {
+    // ely.by has no Mojang player service here: no bans, no chat actions to show. An offline
+    // account has no player at all.
+    if session.provider != Provider::Microsoft {
         return AccountStatus::default();
     }
     let Ok(doc) = discovery() else {
@@ -349,6 +373,8 @@ fn join_server_once(session: &AuthSession, server_hash: &str) -> Result<(), Join
             let doc = discovery()?;
             endpoint(&doc, "session", "join").ok_or(JoinError::Unavailable)?
         }
+        // No service to tell: an online-mode server checks with Mojang and finds no session.
+        Provider::Offline => return Err(JoinError::InvalidSession),
     };
     match agent()
         .post(&url)
@@ -518,8 +544,9 @@ pub fn prepare_chat_keys(now: bool) {
 
 /// Prepare keys for this player, independently of the other local accounts.
 pub fn prepare_chat_keys_for(session: Arc<AuthSession>, now: bool) {
-    // ely.by serves no Mojang profile key pair: its players chat unsigned.
-    if session.provider == Provider::ElyBy {
+    // ely.by serves no Mojang profile key pair: its players chat unsigned. An offline account
+    // has no profile at all.
+    if session.provider != Provider::Microsoft {
         return;
     }
     let uuid = session.uuid;
@@ -588,7 +615,11 @@ pub fn own_textures(session: &AuthSession) -> Option<crate::skins::Textures> {
             .into_string()
             .ok()
             .and_then(|t| serde_json::from_str(&t).ok())?;
-        return Some(crate::skins::elyby_profile_textures(&body));
+        return Some(crate::skins::session_profile_textures(&body));
+    }
+    if session.provider == Provider::Offline {
+        // No profile service: the skin a player of this name wears, looked up by name.
+        return crate::skins::offline_textures(&session.name);
     }
     let response = agent()
         .get(MINECRAFT_PROFILE)
@@ -803,6 +834,25 @@ mod tests {
             r#"{"name":"Notch","uuid":"069a79f444e94726a5befca90e38aaf5","access_token":"t","provider":"other"}"#,
         )
         .is_err());
+    }
+
+    #[test]
+    fn an_offline_session_plays_without_services() {
+        let s = AuthSession::parse(
+            r#"{"name":"Notch","uuid":"b50ad385829d3141a2167e7d7539ba7f","access_token":"0","user_type":"legacy","provider":"offline"}"#,
+        )
+        .unwrap();
+        assert_eq!(s.provider(), Provider::Offline);
+        assert_eq!(s.name, "Notch");
+        assert!(!s.authenticated(), "no service can vouch for it");
+        // "0" is no JWT: it must not read as an expired one, or Play would refuse it.
+        assert!(!s.expired());
+        assert!(
+            AuthSession::parse(
+                r#"{"name":"Notch","uuid":"b50ad385829d3141a2167e7d7539ba7f","access_token":"0","user_type":"other","provider":"offline"}"#,
+            )
+            .is_err()
+        );
     }
 
     #[test]
