@@ -41,11 +41,17 @@ pub const TEXTURE_URIS: [&str; 2] = [
 pub fn texture_uris() -> &'static [String] {
     static URIS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
     URIS.get_or_init(|| {
-        crate::auth::discovery_overridden()
+        let mut uris = crate::auth::discovery_overridden()
             .then(|| crate::auth::discovery().ok())
             .flatten()
             .and_then(|doc| discovery_texture_uris(&doc))
-            .unwrap_or_else(|| TEXTURE_URIS.map(str::to_owned).to_vec())
+            .unwrap_or_else(|| TEXTURE_URIS.map(str::to_owned).to_vec());
+        // An ely.by account's skin and cape live on ely.by (its authlib-injector `skinDomains`).
+        if crate::auth::current().is_some_and(|s| s.provider() == crate::auth::Provider::ElyBy) {
+            uris.push("http://ely.by/{textureId}".into());
+            uris.push("https://ely.by/{textureId}".into());
+        }
+        uris
     })
 }
 
@@ -173,6 +179,15 @@ pub fn services_profile_textures(profile: &serde_json::Value) -> Textures {
         elytra: None,
         signed: false,
     }
+}
+
+/// The textures of an ely.by `/session/profile/{uuid}` answer: its `textures` property, packed,
+/// unsigned here and only taken from the domains `texture_uris` allows.
+pub fn elyby_profile_textures(profile: &serde_json::Value) -> Textures {
+    let Some((value, signature)) = parse_profile(profile).textures else {
+        return Textures::default();
+    };
+    unpack(&value, signature, texture_uris())
 }
 
 /// `profile_skin_url` on a block entity's `profile` NBT (`SkullBlockEntity`):
@@ -785,6 +800,28 @@ fn read_offline_skin(path: &std::path::Path, model: &str) -> Result<(Vec<u8>, bo
 /// `fetchProfile(id, true)`, so its `textures` property is signed), or empty
 /// without an answer. Blocks on the network.
 pub fn fetch_own_properties(id: u128) -> Vec<(String, String, Option<String>)> {
+    if crate::auth::current().is_some_and(|s| s.provider() == crate::auth::Provider::ElyBy) {
+        // ely.by's session server: the profile's properties (its `textures`), unsigned.
+        let url = format!("{}/session/profile/{id:032x}", crate::auth::ELYBY_SERVER);
+        return http_get(&url)
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+            .and_then(|v| {
+                v.get("properties")?
+                    .as_array()?
+                    .iter()
+                    .map(|p| {
+                        Some((
+                            p.get("name")?.as_str()?.to_owned(),
+                            p.get("value")?.as_str()?.to_owned(),
+                            p.get("signature")
+                                .and_then(|s| s.as_str())
+                                .map(str::to_owned),
+                        ))
+                    })
+                    .collect::<Option<Vec<_>>>()
+            })
+            .unwrap_or_default();
+    }
     crate::auth::discovery()
         .ok()
         .and_then(|doc| resolve_profile(&NameOrId::Id(id), &doc))

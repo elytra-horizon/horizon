@@ -199,6 +199,7 @@ impl Session {
                     SignInState::Starting => json!({ "state": "starting" }),
                     SignInState::Working(phase) => json!({ "state": "working", "phase": phase }),
                     SignInState::Code(c) => json!({ "state": "waiting for the player", "link": c.verification_uri, "code": c.user_code }),
+                    SignInState::Browser(url) => json!({ "state": "waiting for the player", "link": url }),
                     SignInState::Done(Ok(a)) => json!({ "state": "signed in", "name": a.name }),
                     SignInState::Done(Err(e)) => json!({ "state": "failed", "error": e }),
                 });

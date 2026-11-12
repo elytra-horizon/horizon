@@ -6,13 +6,21 @@
 //! reads once (`--session-file`), never on its command line. Tokens never reach logs, errors or
 //! output.
 //!
+//! ely.by accounts (docs/elyby-account.md) sign in through ely.by's OAuth2 page in the browser
+//! ([`SignIn::start_elyby`]); their token is the Minecraft session token and the owner gate is
+//! satisfied by the account itself.
+//!
 //! The owner gate ([`launch`]): the launcher starts the game only while an account in it owns
 //! Minecraft: Java Edition, as other launchers do, and the game plays as the selected account.
 //! The game binary itself, its harnesses and the servers don't go through the launcher's gate.
 //!
 //! The Azure app (client ID) is Horizon's own and is configuration: `HORIZON_MSA_CLIENT_ID` at
 //! build time, or at run time to override it. Without one, sign-in says it is not configured.
+//! ely.by's application is configuration too: `HORIZON_ELYBY_CLIENT_ID`, `HORIZON_ELYBY_CLIENT_SECRET`
+//! and `HORIZON_ELYBY_REDIRECT_URI`.
 pub mod session;
+
+mod elyby;
 
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -25,6 +33,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 pub const SERVICE: &str = "dev.playhorizon.launcher";
 const SCOPE: &str = "XboxLive.signin offline_access";
 pub const NOT_CONFIGURED: &str = "This build of the launcher has no Microsoft sign-in (HORIZON_MSA_CLIENT_ID), so it can't start the game.";
+/// What adding an ely.by account says without the OAuth application registered in the build.
+pub const ELY_NOT_CONFIGURED: &str = "This build of the launcher has no ely.by sign-in (HORIZON_ELYBY_CLIENT_ID and HORIZON_ELYBY_CLIENT_SECRET), so it can't add an ely.by account.";
+/// The loopback the OAuth application registered with ely.by redirects to.
+pub const ELY_REDIRECT: &str = "http://127.0.0.1:48632/oauth/ely";
 /// What every Play says while no account in the launcher owns the game.
 pub const NEEDS_OWNER: &str =
     "Sign in with a Microsoft account that owns Minecraft: Java Edition to play";
@@ -47,6 +59,56 @@ pub fn client_id() -> Option<String> {
         .filter(|id| !id.is_empty())
 }
 
+/// The OAuth application ely.by registered for this launcher: the run-time variables win over the
+/// build-time ones, and either half being empty means none.
+pub fn ely_client() -> Option<(String, String)> {
+    let read = |runtime: &str, built: Option<&'static str>| {
+        std::env::var(runtime)
+            .ok()
+            .or_else(|| built.map(str::to_owned))
+            .map(|id| id.trim().to_owned())
+            .filter(|id| !id.is_empty())
+    };
+    let id = read(
+        "HORIZON_ELYBY_CLIENT_ID",
+        option_env!("HORIZON_ELYBY_CLIENT_ID"),
+    )?;
+    let secret = read(
+        "HORIZON_ELYBY_CLIENT_SECRET",
+        option_env!("HORIZON_ELYBY_CLIENT_SECRET"),
+    )?;
+    Some((id, secret))
+}
+
+/// The redirect URI the registered ely.by application answers at: [`ELY_REDIRECT`], or
+/// `HORIZON_ELYBY_REDIRECT_URI` for a development application registered on another port.
+pub fn ely_redirect_uri() -> String {
+    std::env::var("HORIZON_ELYBY_REDIRECT_URI")
+        .ok()
+        .map(|u| u.trim().to_owned())
+        .filter(|u| !u.is_empty())
+        .unwrap_or_else(|| ELY_REDIRECT.to_owned())
+}
+
+/// Which service signed an account in. Older accounts.json and keychain items have no provider
+/// and are Microsoft's.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Provider {
+    #[default]
+    Microsoft,
+    ElyBy,
+}
+
+impl Provider {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Microsoft => "Microsoft",
+            Self::ElyBy => "ely.by",
+        }
+    }
+}
+
 /// Where the requests go: the real services, or a mock in tests.
 #[derive(Clone, Debug)]
 pub struct Endpoints {
@@ -56,6 +118,10 @@ pub struct Endpoints {
     pub xsts: String,
     /// api.minecraftservices.com.
     pub minecraft: String,
+    /// account.ely.by: ely.by's OAuth2 and account API.
+    pub ely_account: String,
+    /// authserver.ely.by: ely.by's Yggdrasil authentication and session server.
+    pub ely_auth: String,
 }
 
 impl Endpoints {
@@ -71,6 +137,8 @@ impl Endpoints {
             xbox_user: "https://user.auth.xboxlive.com/user/authenticate".into(),
             xsts: "https://xsts.auth.xboxlive.com/xsts/authorize".into(),
             minecraft: "https://api.minecraftservices.com".into(),
+            ely_account: "https://account.ely.by".into(),
+            ely_auth: "https://authserver.ely.by".into(),
         }
     }
 }
@@ -535,6 +603,12 @@ pub struct Secrets {
     /// existed passed the same check at sign-in, which refuses everyone else.
     #[serde(default = "owned_at_sign_in")]
     owns: bool,
+    /// Which service this sign-in belongs to; an older item without it is Microsoft's.
+    #[serde(default)]
+    provider: Provider,
+    /// ely.by's OAuth2 refresh token (nothing for Microsoft, whose token is `refresh_token`).
+    #[serde(default)]
+    ely_refresh: Option<String>,
 }
 fn owned_at_sign_in() -> bool {
     true
@@ -574,7 +648,17 @@ impl Secrets {
             minecraft_expires_at: mc.expires_at,
             xuid: mc.xuid,
             owns: true,
+            provider: Provider::Microsoft,
+            ely_refresh: None,
         }
+    }
+
+    pub fn provider(&self) -> Provider {
+        self.provider
+    }
+
+    pub fn is_elyby(&self) -> bool {
+        self.provider == Provider::ElyBy
     }
 }
 
@@ -602,6 +686,9 @@ fn check_with(
     force: bool,
     progress: &dyn Fn(session::Phase),
 ) -> Check {
+    if secrets.provider == Provider::ElyBy {
+        return elyby::check(ep, account, secrets, force, progress);
+    }
     if secrets.sign_in_required {
         return Check::NoAnswer(SIGN_IN_AGAIN.into(), secrets);
     }
@@ -1760,6 +1847,11 @@ fn secrets_in(store: &dyn SecretStore, uuid: &str) -> Option<Secrets> {
         .and_then(|s| serde_json::from_str(&s).ok())
 }
 
+/// Which service signed `uuid` in, when the keychain still has its sign-in.
+pub fn provider_of(store: &dyn SecretStore, uuid: &str) -> Option<Provider> {
+    secrets_in(store, uuid).map(|s| s.provider)
+}
+
 impl Accounts {
     pub(crate) fn path() -> PathBuf {
         crate::backend::data_dir().join("accounts.json")
@@ -2120,13 +2212,16 @@ pub fn write_session_file(
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
     let mut file = options.open(&path).map_err(|e| e.to_string())?;
-    let body = json!({
+    let mut body = json!({
         "name": account.name,
         "uuid": account.uuid,
         "access_token": secrets.minecraft_token,
-        "user_type": "msa",
+        "user_type": if secrets.is_elyby() { "mojang" } else { "msa" },
         "xuid": secrets.xuid,
     });
+    if secrets.is_elyby() {
+        body["provider"] = json!("elyby");
+    }
     std::io::Write::write_all(&mut file, body.to_string().as_bytes()).map_err(|e| e.to_string())?;
     Ok(path)
 }
@@ -2214,7 +2309,7 @@ fn accept_sign_in(
     if let Some(expected) = expected {
         if expected.uuid != account.uuid {
             return Err(format!(
-                "Signed in as {} instead of {}. Use the Microsoft account for {} and try again.",
+                "Signed in as {} instead of {}. Use the account for {} and try again.",
                 account.name, expected.name, expected.name
             ));
         }
@@ -2237,6 +2332,8 @@ pub enum SignInState {
     Starting,
     /// Waiting for the player at `verification_uri` with `user_code`.
     Code(DeviceCode),
+    /// Waiting for the player at the ely.by page (the browser comes back to the loopback).
+    Browser(String),
     Working(session::Phase),
     Done(Result<Account, String>),
 }
@@ -2255,6 +2352,60 @@ impl SignIn {
     /// Restore this exact Minecraft identity without changing who currently plays.
     pub fn start_for(account: Account) -> Self {
         Self::start_expected(Some(account))
+    }
+
+    /// Add an ely.by account through its OAuth2 page.
+    pub fn start_elyby() -> Self {
+        Self::start_elyby_expected(None)
+    }
+
+    /// Sign this exact ely.by account in again (another account is refused).
+    pub fn start_elyby_for(account: Account) -> Self {
+        Self::start_elyby_expected(Some(account))
+    }
+
+    fn start_elyby_expected(expected: Option<Account>) -> Self {
+        use std::sync::atomic::Ordering;
+        let state = std::sync::Arc::new(Mutex::new(SignInState::Starting));
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (thread_state, thread_cancel) = (state.clone(), cancel.clone());
+        std::thread::spawn(move || {
+            let set = |s| *thread_state.lock().unwrap() = s;
+            let result = (|| {
+                let ep = Endpoints::live();
+                let (client_id, client_secret) = ely_client().ok_or(ELY_NOT_CONFIGURED)?;
+                let redirect = ely_redirect_uri();
+                let csrf = elyby::random_state();
+                let url = elyby::authorize_url(&ep, &client_id, &redirect, &csrf);
+                set(SignInState::Browser(url));
+                let code = elyby::wait_for_code(&redirect, &csrf, &|| {
+                    thread_cancel.load(Ordering::Relaxed)
+                })?;
+                set(SignInState::Working(session::Phase::ElyBy));
+                let tokens = elyby::exchange(&ep, &client_id, &client_secret, &redirect, &code)?;
+                set(SignInState::Working(session::Phase::Profile));
+                let (account, secrets) = elyby::finish(&ep, tokens)?;
+                let progress = |phase| set(SignInState::Working(phase));
+                progress(session::Phase::Queued);
+                let store = store();
+                let _operation = session::lock(store)?;
+                let mut accounts = Accounts::load();
+                accept_sign_in(
+                    &mut accounts,
+                    store,
+                    expected.as_ref(),
+                    account.clone(),
+                    &secrets,
+                    &|| thread_cancel.load(Ordering::Relaxed),
+                    &progress,
+                )?;
+                progress(session::Phase::Saving);
+                accounts.save()?;
+                Ok(account)
+            })();
+            set(SignInState::Done(result));
+        });
+        Self { state, cancel }
     }
 
     fn start_expected(expected: Option<Account>) -> Self {
