@@ -5,6 +5,7 @@
 //! nothing here is logged.
 use super::*;
 use base64::Engine;
+use sha2::{Digest, Sha256};
 
 /// The scopes the launcher asks for: who the player is, a refresh token, and the Minecraft
 /// session token itself.
@@ -30,14 +31,16 @@ pub(super) fn authorize_url(
     client_id: &str,
     redirect_uri: &str,
     state: &str,
+    code_challenge: &str,
 ) -> String {
     format!(
-        "{}/oauth2/v1?client_id={}&redirect_uri={}&response_type=code&scope={}&state={}",
+        "{}/oauth2/v1?client_id={}&redirect_uri={}&response_type=code&scope={}&state={}&code_challenge={}&code_challenge_method=S256",
         ep.ely_account,
         encode(client_id),
         encode(redirect_uri),
         encode(SCOPE),
         encode(state),
+        encode(code_challenge),
     )
 }
 
@@ -48,47 +51,104 @@ pub(super) fn random_state() -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// `…/api/oauth2/v1/token` for an authorization code.
+/// A PKCE pair (RFC 7636): 32 random bytes make the verifier, its SHA-256 the challenge. ely.by's
+/// applications are public clients with no secret, so the verifier is what ties the code back to
+/// this sign-in.
+pub(super) fn pkce() -> (String, String) {
+    let mut bytes = [0u8; 32];
+    let _ = getrandom::fill(&mut bytes);
+    let verifier = b64url(bytes);
+    let challenge = challenge_of(&verifier);
+    (verifier, challenge)
+}
+
+/// `BASE64URL(SHA256(verifier))`, as PKCE's `S256` method defines it.
+fn challenge_of(verifier: &str) -> String {
+    b64url(Sha256::digest(verifier.as_bytes()))
+}
+
+fn b64url(bytes: impl AsRef<[u8]>) -> String {
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+}
+
+/// `…/api/oauth2/v1/token` for an authorization code, with the PKCE verifier that matches the
+/// challenge the browser carried. A secret is only sent for a confidential application.
 pub(super) fn exchange(
     ep: &Endpoints,
     client_id: &str,
-    client_secret: &str,
+    client_secret: Option<&str>,
     redirect_uri: &str,
     code: &str,
+    code_verifier: &str,
 ) -> Result<Tokens, String> {
     let (status, v) = send(
         request_to("POST", &format!("{}/api/oauth2/v1/token", ep.ely_account)),
-        Some(Body::Form(vec![
-            ("client_id", client_id),
-            ("client_secret", client_secret),
-            ("redirect_uri", redirect_uri),
-            ("grant_type", "authorization_code"),
-            ("code", code),
-        ])),
+        Some(Body::Form(exchange_form(
+            client_id,
+            client_secret,
+            redirect_uri,
+            code,
+            code_verifier,
+        ))),
         "ely.by",
     )?;
     tokens(status, &v, None)
+}
+
+fn exchange_form<'a>(
+    client_id: &'a str,
+    client_secret: Option<&'a str>,
+    redirect_uri: &'a str,
+    code: &'a str,
+    code_verifier: &'a str,
+) -> Vec<(&'a str, &'a str)> {
+    let mut form = vec![
+        ("client_id", client_id),
+        ("redirect_uri", redirect_uri),
+        ("grant_type", "authorization_code"),
+        ("code", code),
+        ("code_verifier", code_verifier),
+    ];
+    if let Some(secret) = client_secret {
+        form.push(("client_secret", secret));
+    }
+    form
 }
 
 /// `…/api/oauth2/v1/token` with the refresh token, asked for the same scopes.
 pub(super) fn refresh(
     ep: &Endpoints,
     client_id: &str,
-    client_secret: &str,
+    client_secret: Option<&str>,
     refresh_token: &str,
 ) -> Result<Tokens, String> {
     let (status, v) = send(
         request_to("POST", &format!("{}/api/oauth2/v1/token", ep.ely_account)),
-        Some(Body::Form(vec![
-            ("client_id", client_id),
-            ("client_secret", client_secret),
-            ("scope", SCOPE),
-            ("refresh_token", refresh_token),
-            ("grant_type", "refresh_token"),
-        ])),
+        Some(Body::Form(refresh_form(
+            client_id,
+            client_secret,
+            refresh_token,
+        ))),
         "ely.by",
     )?;
     tokens(status, &v, Some(refresh_token.to_owned()))
+}
+
+fn refresh_form<'a>(
+    client_id: &'a str,
+    client_secret: Option<&'a str>,
+    refresh_token: &'a str,
+) -> Vec<(&'a str, &'a str)> {
+    let mut form = vec![
+        ("client_id", client_id),
+        ("scope", SCOPE),
+        ("refresh_token", refresh_token),
+        ("grant_type", "refresh_token"),
+    ];
+    if let Some(secret) = client_secret {
+        form.push(("client_secret", secret));
+    }
+    form
 }
 
 fn tokens(status: u16, v: &Value, kept_refresh: Option<String>) -> Result<Tokens, String> {
@@ -453,13 +513,17 @@ pub(super) fn check(
     if force || secrets.minecraft_expires_at <= now() + RENEW_BEFORE {
         progress(session::Phase::ElyBy);
         let renewed = (|| {
-            let (client_id, client_secret) =
-                ely_client().ok_or_else(|| ELY_NOT_CONFIGURED.to_string())?;
+            let app = ely_client().ok_or_else(|| ELY_NOT_CONFIGURED.to_string())?;
             let refresh_token = secrets
                 .ely_refresh
                 .clone()
                 .ok_or_else(|| SIGN_IN_AGAIN.to_string())?;
-            refresh(ep, &client_id, &client_secret, &refresh_token)
+            refresh(
+                ep,
+                &app.client_id,
+                app.client_secret.as_deref(),
+                &refresh_token,
+            )
         })();
         match renewed {
             Ok(tokens) => {
@@ -513,11 +577,55 @@ mod tests {
     #[test]
     fn the_authorize_url_carries_every_parameter() {
         let ep = Endpoints::live();
-        let url = authorize_url(&ep, "id", "http://127.0.0.1:1/oauth/ely", "state");
+        let url = authorize_url(
+            &ep,
+            "id",
+            "http://127.0.0.1:1/oauth/ely",
+            "state",
+            "challenge",
+        );
         assert!(url.starts_with("https://account.ely.by/oauth2/v1?"));
         assert!(url.contains("response_type=code"));
         assert!(url.contains("scope=account_info%20offline_access%20minecraft_server_session"));
         assert!(url.contains("state=state"));
+        assert!(url.contains("code_challenge=challenge"));
+        assert!(url.contains("code_challenge_method=S256"));
+    }
+
+    #[test]
+    fn the_pkce_challenge_follows_rfc_7636() {
+        // The worked example in RFC 7636, appendix B.
+        assert_eq!(
+            challenge_of("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"),
+            "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+        );
+        let (verifier, challenge) = pkce();
+        assert_eq!(verifier.len(), 43, "32 bytes, base64url without padding");
+        assert_eq!(challenge, challenge_of(&verifier));
+    }
+
+    #[test]
+    fn a_public_client_sends_no_secret() {
+        let exchange = exchange_form(
+            "id",
+            None,
+            "http://127.0.0.1:1/oauth/ely",
+            "code",
+            "verifier",
+        );
+        assert!(exchange.iter().all(|(key, _)| *key != "client_secret"));
+        assert_eq!(
+            exchange.iter().find(|(key, _)| *key == "code_verifier"),
+            Some(&("code_verifier", "verifier"))
+        );
+        let refresh = refresh_form("id", None, "refresh");
+        assert!(refresh.iter().all(|(key, _)| *key != "client_secret"));
+        // A confidential application still sends the secret the player configured.
+        let confidential = refresh_form("id", Some("secret"), "refresh");
+        assert_eq!(
+            confidential.iter().find(|(key, _)| *key == "client_secret"),
+            Some(&("client_secret", "secret"))
+        );
     }
 
     #[test]

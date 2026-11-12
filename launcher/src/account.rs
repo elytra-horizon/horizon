@@ -16,7 +16,8 @@
 //!
 //! The Azure app (client ID) is Horizon's own and is configuration: `HORIZON_MSA_CLIENT_ID` at
 //! build time, or at run time to override it. Without one, sign-in says it is not configured.
-//! ely.by's application is configuration too: `HORIZON_ELYBY_CLIENT_ID`, `HORIZON_ELYBY_CLIENT_SECRET`
+//! ely.by's application is configuration too: `HORIZON_ELYBY_CLIENT_ID` (the fork's public
+//! application by default), the optional `HORIZON_ELYBY_CLIENT_SECRET` for a confidential one,
 //! and `HORIZON_ELYBY_REDIRECT_URI`.
 pub mod session;
 
@@ -33,8 +34,11 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 pub const SERVICE: &str = "dev.playhorizon.launcher";
 const SCOPE: &str = "XboxLive.signin offline_access";
 pub const NOT_CONFIGURED: &str = "This build of the launcher has no Microsoft sign-in (HORIZON_MSA_CLIENT_ID), so it can't start the game.";
-/// What adding an ely.by account says without the OAuth application registered in the build.
-pub const ELY_NOT_CONFIGURED: &str = "This build of the launcher has no ely.by sign-in (HORIZON_ELYBY_CLIENT_ID and HORIZON_ELYBY_CLIENT_SECRET), so it can't add an ely.by account.";
+/// What adding an ely.by account says without an OAuth application to sign in with.
+pub const ELY_NOT_CONFIGURED: &str = "This build of the launcher has no ely.by sign-in (HORIZON_ELYBY_CLIENT_ID), so it can't add an ely.by account.";
+/// The ely.by application registered for this fork. It is a public client: nothing in it is a
+/// secret, and PKCE protects the redirect (RFC 7636).
+pub const DEFAULT_ELYBY_CLIENT_ID: &str = "elytra-horizon";
 /// The loopback the OAuth application registered with ely.by redirects to.
 pub const ELY_REDIRECT: &str = "http://127.0.0.1:48632/oauth/ely";
 /// What every Play says while no account in the launcher owns the game.
@@ -59,25 +63,40 @@ pub fn client_id() -> Option<String> {
         .filter(|id| !id.is_empty())
 }
 
+/// The ely.by OAuth application this launcher signs in with.
+pub struct ElyApplication {
+    pub client_id: String,
+    /// Only a confidential application has one; ely.by's applications are public clients.
+    pub client_secret: Option<String>,
+}
+
 /// The OAuth application ely.by registered for this launcher: the run-time variables win over the
-/// build-time ones, and either half being empty means none.
-pub fn ely_client() -> Option<(String, String)> {
-    let read = |runtime: &str, built: Option<&'static str>| {
-        std::env::var(runtime)
-            .ok()
-            .or_else(|| built.map(str::to_owned))
-            .map(|id| id.trim().to_owned())
-            .filter(|id| !id.is_empty())
-    };
-    let id = read(
+/// build-time ones, and a variable set to an empty value means none. The fork's public application
+/// is the default client ID.
+pub fn ely_client() -> Option<ElyApplication> {
+    fn read(runtime: &str, built: Option<&'static str>, default: Option<&str>) -> Option<String> {
+        let value = match std::env::var(runtime) {
+            Ok(value) => Some(value),
+            Err(_) => built.or(default).map(str::to_owned),
+        };
+        value
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+    }
+    let client_id = read(
         "HORIZON_ELYBY_CLIENT_ID",
         option_env!("HORIZON_ELYBY_CLIENT_ID"),
+        Some(DEFAULT_ELYBY_CLIENT_ID),
     )?;
-    let secret = read(
+    let client_secret = read(
         "HORIZON_ELYBY_CLIENT_SECRET",
         option_env!("HORIZON_ELYBY_CLIENT_SECRET"),
-    )?;
-    Some((id, secret))
+        None,
+    );
+    Some(ElyApplication {
+        client_id,
+        client_secret,
+    })
 }
 
 /// The redirect URI the registered ely.by application answers at: [`ELY_REDIRECT`], or
@@ -2373,16 +2392,24 @@ impl SignIn {
             let set = |s| *thread_state.lock().unwrap() = s;
             let result = (|| {
                 let ep = Endpoints::live();
-                let (client_id, client_secret) = ely_client().ok_or(ELY_NOT_CONFIGURED)?;
+                let app = ely_client().ok_or(ELY_NOT_CONFIGURED)?;
                 let redirect = ely_redirect_uri();
                 let csrf = elyby::random_state();
-                let url = elyby::authorize_url(&ep, &client_id, &redirect, &csrf);
+                let (verifier, challenge) = elyby::pkce();
+                let url = elyby::authorize_url(&ep, &app.client_id, &redirect, &csrf, &challenge);
                 set(SignInState::Browser(url));
                 let code = elyby::wait_for_code(&redirect, &csrf, &|| {
                     thread_cancel.load(Ordering::Relaxed)
                 })?;
                 set(SignInState::Working(session::Phase::ElyBy));
-                let tokens = elyby::exchange(&ep, &client_id, &client_secret, &redirect, &code)?;
+                let tokens = elyby::exchange(
+                    &ep,
+                    &app.client_id,
+                    app.client_secret.as_deref(),
+                    &redirect,
+                    &code,
+                    &verifier,
+                )?;
                 set(SignInState::Working(session::Phase::Profile));
                 let (account, secrets) = elyby::finish(&ep, tokens)?;
                 let progress = |phase| set(SignInState::Working(phase));
