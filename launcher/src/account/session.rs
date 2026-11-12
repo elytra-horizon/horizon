@@ -13,6 +13,8 @@ pub enum Phase {
     Keychain,
     Microsoft,
     Xbox,
+    /// ely.by's OAuth2 token, or the profile behind it.
+    ElyBy,
     Minecraft,
     Ownership,
     Profile,
@@ -27,6 +29,7 @@ impl Phase {
             Self::Keychain => "Reading keychain…",
             Self::Microsoft => "Renewing Microsoft sign-in…",
             Self::Xbox => "Signing in to Xbox Live…",
+            Self::ElyBy => "Signing in to ely.by…",
             Self::Minecraft => "Getting Minecraft session…",
             Self::Ownership => "Checking Minecraft ownership…",
             Self::Profile => "Loading Minecraft profile…",
@@ -401,7 +404,10 @@ pub(super) fn join_server_with(
         "selectedProfile": account.uuid,
         "serverId": server_id,
     });
-    let url = format!("{session}/session/minecraft/join");
+    let url = match secrets.provider {
+        Provider::ElyBy => format!("{}/session/join", ep.ely_auth),
+        Provider::Microsoft => format!("{session}/session/minecraft/join"),
+    };
     match send(
         request_to("POST", &url),
         Some(Body::Json(body)),

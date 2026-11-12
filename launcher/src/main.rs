@@ -372,6 +372,8 @@ struct Launcher {
     auth_next: u64,
     sign_in: Option<SignIn>,
     sign_in_state: Option<SignInState>,
+    /// Which service the sign-in under way belongs to.
+    sign_in_provider: Option<account::Provider>,
     /// What to say when the keychain doesn't keep sign-ins ([`account::no_keychain`]).
     keychain: Option<String>,
     /// Whether an account here owns the game, by the keychain's last answers (the owner gate);
@@ -684,6 +686,7 @@ impl Launcher {
             auth_next: 0,
             sign_in: None,
             sign_in_state: None,
+            sign_in_provider: None,
             keychain: None,
             owner: None,
             owner_screen_open: false,
@@ -1582,6 +1585,12 @@ impl Launcher {
         changed |= self.toast_tick();
         if let Some(sign_in) = &self.sign_in {
             if let Some(state) = sign_in_change(&mut self.sign_in_state, sign_in.state()) {
+                // ely.by's page opens by itself: the player finishes signing in there.
+                if let SignInState::Browser(url) = &state {
+                    if self.sign_in_provider == Some(account::Provider::ElyBy) {
+                        cx.open_url(url);
+                    }
+                }
                 if let SignInState::Done(Ok(ref account)) = state {
                     self.auth_busy.remove(&account.uuid);
                     self.sign_in_target = None;
@@ -2026,8 +2035,30 @@ impl Launcher {
 
     fn re_sign_in(&mut self, uuid: &str) {
         if let Some(account) = self.accounts.find(uuid).cloned() {
-            self.begin_sign_in(Some(account));
+            if account::provider_of(account::store(), &account.uuid)
+                == Some(account::Provider::ElyBy)
+            {
+                self.begin_elyby_sign_in(Some(account));
+            } else {
+                self.begin_sign_in(Some(account));
+            }
         }
+    }
+
+    /// Adding an ely.by account: the page opens in the browser, the loopback brings the code back.
+    fn start_elyby_sign_in(&mut self) {
+        self.begin_elyby_sign_in(None);
+    }
+
+    fn begin_elyby_sign_in(&mut self, target: Option<account::Account>) {
+        self.cancel_sign_in();
+        self.sign_in = Some(match &target {
+            Some(account) => SignIn::start_elyby_for(account.clone()),
+            None => SignIn::start_elyby(),
+        });
+        self.sign_in_target = target;
+        self.sign_in_state = Some(SignInState::Starting);
+        self.sign_in_provider = Some(account::Provider::ElyBy);
     }
 
     fn begin_sign_in(&mut self, target: Option<account::Account>) {
@@ -2042,6 +2073,7 @@ impl Launcher {
         });
         self.sign_in_target = target;
         self.sign_in_state = Some(SignInState::Starting);
+        self.sign_in_provider = Some(account::Provider::Microsoft);
     }
 
     fn cancel_sign_in(&mut self) {
@@ -2050,6 +2082,7 @@ impl Launcher {
         }
         self.sign_in_state = None;
         self.sign_in_target = None;
+        self.sign_in_provider = None;
     }
 
     fn choose_folder(&mut self, cx: &mut Context<Self>) {
@@ -3560,13 +3593,15 @@ impl Launcher {
                     ),
                     &t,
                 ));
-            } else if self.accounts.selected().is_none() && account::client_id().is_some() {
+            } else if self.accounts.selected().is_none()
+                && (account::client_id().is_some() || account::ely_client().is_some())
+            {
                 rows = rows.child(index_row(
                     5,
                     tr("Playing offline"),
                     Some(
                         div()
-                            .child(tr("Online servers need a Microsoft account."))
+                            .child(tr("Online servers need a signed-in account."))
                             .into_any_element(),
                     ),
                     Some(
@@ -4451,7 +4486,9 @@ impl Launcher {
                 .filter(|a| a.uuid == uuid)
                 .and_then(|_| match self.sign_in_state.as_ref() {
                     Some(SignInState::Starting) => Some("Asking Microsoft…"),
-                    Some(SignInState::Code(_)) => Some("Waiting for browser sign-in…"),
+                    Some(SignInState::Code(_) | SignInState::Browser(_)) => {
+                        Some("Waiting for browser sign-in…")
+                    }
                     Some(SignInState::Working(phase)) => Some(phase.label()),
                     _ => None,
                 });
@@ -4517,11 +4554,7 @@ impl Launcher {
                 a.name.clone(),
                 Some(
                     div()
-                        .child(tr(if plays {
-                            "Microsoft account · plays"
-                        } else {
-                            "Microsoft account"
-                        }))
+                        .child(tr(if plays { "Plays" } else { "Signed in" }))
                         .child(account_status_line(status, progress, &t))
                         .when(!busy, |row| {
                             row.when_some(status.filter(|s| s.message != s.label()), |row, s| {
@@ -4541,15 +4574,34 @@ impl Launcher {
     /// happening (the code to enter, a problem), and its buttons.
     fn sign_in_parts(&self, cx: &mut Context<Self>) -> (String, Div, Option<AnyElement>) {
         let t = self.theme;
-        let configured = account::client_id().is_some();
+        let configured = account::client_id().is_some() || account::ely_client().is_some();
         let busy = matches!(
             self.sign_in_state,
-            Some(SignInState::Starting | SignInState::Code(_) | SignInState::Working(_))
+            Some(
+                SignInState::Starting
+                    | SignInState::Code(_)
+                    | SignInState::Browser(_)
+                    | SignInState::Working(_)
+            )
         );
         let detail = match &self.sign_in_state {
             _ if !configured => div().child(tr(account::NOT_CONFIGURED)),
-            Some(SignInState::Starting) => div().child(tr("Asking Microsoft…")),
+            Some(SignInState::Starting) => div().child(match self.sign_in_provider {
+                Some(account::Provider::ElyBy) => tr("Asking ely.by…"),
+                _ => tr("Asking Microsoft…"),
+            }),
             Some(SignInState::Working(phase)) => div().child(tr(phase.label())),
+            Some(SignInState::Browser(url)) => div()
+                .flex()
+                .flex_col()
+                .gap(px(6.))
+                .child(tr("Finish signing in to ely.by in your browser."))
+                .child(
+                    text(theme::HEADING)
+                        .font_family(theme::MONO)
+                        .text_color(t.ink)
+                        .child(url.clone()),
+                ),
             Some(SignInState::Code(code)) => div()
                 .flex()
                 .flex_col()
@@ -4612,6 +4664,26 @@ impl Launcher {
         };
         let action = if !configured {
             None
+        } else if let Some(SignInState::Browser(url)) = &self.sign_in_state {
+            let uri = url.clone();
+            Some(
+                div()
+                    .flex()
+                    .gap(px(4.))
+                    .child(
+                        button("sign-in-elyby-open", "Open link", Kind::Secondary, &t)
+                            .on_click(move |_, _, cx| cx.open_url(&uri)),
+                    )
+                    .child(
+                        button("sign-in-elyby-cancel", "Cancel", Kind::Ghost, &t).on_click(
+                            cx.listener(|this, _: &ClickEvent, _, cx| {
+                                this.cancel_sign_in();
+                                cx.notify();
+                            }),
+                        ),
+                    )
+                    .into_any_element(),
+            )
         } else if let Some(SignInState::Code(code)) = &self.sign_in_state {
             let (uri, user_code) = (code.verification_uri.clone(), code.user_code.clone());
             let (private_uri, link_uri) = (uri.clone(), uri.clone());

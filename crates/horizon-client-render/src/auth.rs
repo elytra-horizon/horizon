@@ -11,14 +11,26 @@ use std::{
 
 /// MinecraftServicesEnvironment.PROD.
 pub const DEFAULT_DISCOVERY: &str = "https://discovery.minecraftservices.com/minecraft/client";
+/// ely.by's authlib-injector API root: `join` and `profile` live under it, and its textures
+/// come from `ely.by`.
+pub const ELYBY_SERVER: &str = "https://authserver.ely.by";
 /// A session file older than this is refused: it can't be replayed later.
 const MAX_SESSION_FILE_AGE: Duration = Duration::from_secs(120);
 
-/// A signed-in account (vanilla's User with type msa).
+/// Which service the launcher signed this account in with.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Provider {
+    #[default]
+    Microsoft,
+    ElyBy,
+}
+
+/// A signed-in account (vanilla's User with type msa, or an ely.by one).
 pub struct AuthSession {
     pub name: String,
     pub uuid: u128,
     pub xuid: Option<String>,
+    provider: Provider,
     access_token: String,
 }
 impl std::fmt::Debug for AuthSession {
@@ -46,6 +58,7 @@ impl AuthSession {
             name: name.to_owned(),
             uuid,
             xuid: None,
+            provider: Provider::Microsoft,
             access_token: access_token.to_owned(),
         }
     }
@@ -53,11 +66,22 @@ impl AuthSession {
     pub fn access_token(&self) -> &str {
         &self.access_token
     }
-    /// The session file's JSON: {"name", "uuid", "access_token", "user_type": "msa", "xuid"}.
+
+    pub fn provider(&self) -> Provider {
+        self.provider
+    }
+
+    /// The session file's JSON: {"name", "uuid", "access_token", "user_type", "xuid"} and, for
+    /// an ely.by account, "provider": "elyby" (user_type "mojang").
     pub fn parse(text: &str) -> Result<Self, String> {
         let v: serde_json::Value =
             serde_json::from_str(text).map_err(|_| "the session is not valid JSON")?;
         let field = |k: &str| v.get(k).and_then(|s| s.as_str());
+        let provider = match field("provider") {
+            None | Some("microsoft") => Provider::Microsoft,
+            Some("elyby") => Provider::ElyBy,
+            Some(other) => return Err(format!("the session's provider is not known ({other})")),
+        };
         let name = field("name").ok_or("the session has no name")?;
         if name.is_empty() || name.chars().count() > 16 {
             return Err("the session's name is not a valid player name".into());
@@ -68,13 +92,20 @@ impl AuthSession {
         let access_token = field("access_token")
             .filter(|t| !t.is_empty())
             .ok_or("the session has no access token")?;
-        if field("user_type").is_some_and(|t| t != "msa") {
-            return Err("the session is not a Microsoft account session".into());
+        match (provider, field("user_type")) {
+            (Provider::Microsoft, Some(t)) if t != "msa" => {
+                return Err("the session is not a Microsoft account session".into());
+            }
+            (Provider::ElyBy, Some(t)) if t != "mojang" && t != "msa" => {
+                return Err("the session is not an ely.by account session".into());
+            }
+            _ => {}
         }
         Ok(Self {
             name: name.to_owned(),
             uuid,
             xuid: field("xuid").map(str::to_owned),
+            provider,
             access_token: access_token.to_owned(),
         })
     }
@@ -236,6 +267,10 @@ pub fn endpoint(doc: &serde_json::Value, service: &str, name: &str) -> Option<St
 /// to no actions, as vanilla does. Blocks: call it off the main thread.
 pub fn fetch_account_status(session: &AuthSession) -> crate::ban_notice::AccountStatus {
     use crate::ban_notice::{AccountStatus, parse_profile_actions, parse_properties};
+    // ely.by has no Mojang player service here: no bans, no chat actions to show.
+    if session.provider == Provider::ElyBy {
+        return AccountStatus::default();
+    }
     let Ok(doc) = discovery() else {
         return AccountStatus::default();
     };
@@ -306,8 +341,15 @@ pub fn join_server(session: &AuthSession, server_hash: &str) -> Result<(), JoinE
 }
 
 fn join_server_once(session: &AuthSession, server_hash: &str) -> Result<(), JoinError> {
-    let doc = discovery()?;
-    let url = endpoint(&doc, "session", "join").ok_or(JoinError::Unavailable)?;
+    let url = match session.provider {
+        // ely.by's authlib-injector API: the session server is the authserver itself, without
+        // the `minecraft` namespace vanilla's paths carry.
+        Provider::ElyBy => format!("{ELYBY_SERVER}/session/join"),
+        Provider::Microsoft => {
+            let doc = discovery()?;
+            endpoint(&doc, "session", "join").ok_or(JoinError::Unavailable)?
+        }
+    };
     match agent()
         .post(&url)
         .set("Content-Type", "application/json; charset=utf-8")
@@ -476,6 +518,10 @@ pub fn prepare_chat_keys(now: bool) {
 
 /// Prepare keys for this player, independently of the other local accounts.
 pub fn prepare_chat_keys_for(session: Arc<AuthSession>, now: bool) {
+    // ely.by serves no Mojang profile key pair: its players chat unsigned.
+    if session.provider == Provider::ElyBy {
+        return;
+    }
     let uuid = session.uuid;
     let mut accounts = CHAT_KEYS.lock().unwrap();
     let keys = accounts.entry(uuid).or_default();
@@ -532,6 +578,18 @@ const MINECRAFT_PROFILE: &str = "https://api.minecraftservices.com/minecraft/pro
 /// Single-player and integrated servers often send no `textures` property, or
 /// one without the equipped cape; the client asks the profile endpoint once.
 pub fn own_textures(session: &AuthSession) -> Option<crate::skins::Textures> {
+    if session.provider == Provider::ElyBy {
+        // ely.by's session server: the textures property, unsigned.
+        let url = format!("{ELYBY_SERVER}/session/profile/{:032x}", session.uuid);
+        let body: serde_json::Value = agent()
+            .get(&url)
+            .call()
+            .ok()?
+            .into_string()
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())?;
+        return Some(crate::skins::elyby_profile_textures(&body));
+    }
     let response = agent()
         .get(MINECRAFT_PROFILE)
         .set("Authorization", &format!("Bearer {}", session.access_token))
@@ -727,6 +785,24 @@ mod tests {
         assert_eq!(p.properties[0].signature.as_deref(), Some("c2ln"));
         assert_eq!(parse_joined(""), None);
         assert_eq!(parse_joined(r#"{"name":"Notch"}"#), None);
+    }
+
+    #[test]
+    fn an_elyby_session_names_its_provider() {
+        let s = AuthSession::parse(
+            r#"{"name":"Notch","uuid":"069a79f444e94726a5befca90e38aaf5","access_token":"t","user_type":"mojang","provider":"elyby"}"#,
+        )
+        .unwrap();
+        assert_eq!(s.provider(), Provider::ElyBy);
+        assert!(!format!("{s:?}").contains("access_token: \"t\""));
+        assert!(AuthSession::parse(
+            r#"{"name":"Notch","uuid":"069a79f444e94726a5befca90e38aaf5","access_token":"t","provider":"elyby"}"#,
+        )
+        .is_ok());
+        assert!(AuthSession::parse(
+            r#"{"name":"Notch","uuid":"069a79f444e94726a5befca90e38aaf5","access_token":"t","provider":"other"}"#,
+        )
+        .is_err());
     }
 
     #[test]

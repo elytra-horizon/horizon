@@ -41,6 +41,7 @@ impl Launcher {
             Some(SignInState::Starting) => Shown::Starting("Asking Microsoft…"),
             Some(SignInState::Working(phase)) => Shown::Starting(phase.label()),
             Some(SignInState::Code(code)) => Shown::Code(&code.verification_uri, &code.user_code),
+            Some(SignInState::Browser(_)) => Shown::Starting("Waiting for the browser…"),
             Some(SignInState::Done(Err(e))) => Shown::Error(e),
             Some(SignInState::Done(Ok(_))) | None => Shown::Idle,
         };

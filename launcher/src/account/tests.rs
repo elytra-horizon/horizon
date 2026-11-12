@@ -1,6 +1,7 @@
 //! The sign-in chain against a local mock of the Microsoft, Xbox Live and Minecraft endpoints
 //! (recorded response shapes, mock tokens only), and the keychain abstraction in memory.
 use super::*;
+use base64::Engine;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::sync::Arc;
@@ -144,6 +145,42 @@ fn route(mock: &mut Mock, method: &str, path: &str, auth: &str, body: &str) -> (
             );
             (204, String::new())
         }
+        ("POST", "/ely/account/api/oauth2/v1/token") => {
+            assert_eq!(form("client_id").as_deref(), Some("test-ely"));
+            assert_eq!(form("client_secret").as_deref(), Some("test-secret"));
+            assert_eq!(form("refresh_token").as_deref(), Some("ely-refresh-1"));
+            assert_eq!(
+                form("scope").as_deref(),
+                Some("account_info offline_access minecraft_server_session")
+            );
+            assert_eq!(form("grant_type").as_deref(), Some("refresh_token"));
+            // A refresh answers no refresh_token: the launcher keeps the old one.
+            reply(
+                200,
+                json!({"access_token": "ely-access-2", "token_type": "Bearer", "expires_in": 86400}),
+            )
+        }
+        ("GET", "/ely/account/api/account/v1/info") => {
+            assert_eq!(auth, "Bearer ely-access-2");
+            reply(
+                200,
+                json!({"id": 1, "uuid": "069a79f4-44e9-4726-a5be-fca90e38aaf5", "username": "Notch"}),
+            )
+        }
+        ("GET", path) if path.starts_with("/ely/auth/session/profile/") => {
+            assert_eq!(path, format!("/ely/auth/session/profile/{UUID}"));
+            let textures = json!({
+                "textures": {
+                    "SKIN": {"url": "http://ely.by/storage/skins/abc.png", "metadata": {"model": "slim"}},
+                    "CAPE": {"url": "https://ely.by/storage/capes/cape.png"},
+                }
+            });
+            let value = base64::engine::general_purpose::STANDARD.encode(textures.to_string());
+            reply(
+                200,
+                json!({"id": UUID, "name": "Notch", "properties": [{"name": "textures", "value": value}]}),
+            )
+        }
         _ => reply(404, json!({"error": "NotFound"})),
     }
 }
@@ -204,6 +241,8 @@ fn serve(mock: Arc<Mutex<Mock>>) -> Endpoints {
         xbox_user: format!("{base}/xbl"),
         xsts: format!("{base}/xsts"),
         minecraft: format!("{base}/mc"),
+        ely_account: format!("{base}/ely/account"),
+        ely_auth: format!("{base}/ely/auth"),
     }
 }
 
@@ -328,6 +367,8 @@ fn secrets(token: &str, owns: bool) -> Secrets {
         minecraft_expires_at: now() + 7200,
         xuid: None,
         owns,
+        provider: Provider::Microsoft,
+        ely_refresh: None,
     }
 }
 
@@ -338,6 +379,8 @@ fn offline() -> Endpoints {
         xbox_user: "http://127.0.0.1:9/xbl".into(),
         xsts: "http://127.0.0.1:9/xsts".into(),
         minecraft: "http://127.0.0.1:9/mc".into(),
+        ely_account: "http://127.0.0.1:9/ely/account".into(),
+        ely_auth: "http://127.0.0.1:9/ely/auth".into(),
     }
 }
 
@@ -380,6 +423,46 @@ fn refresh_only_when_the_token_runs_out() {
         check(&ep, Some("test-client"), &notch(), revoked),
         Check::NoAnswer(e, s) if e == SIGN_IN_AGAIN && s.owns
     ));
+}
+
+#[test]
+fn an_elyby_check_renews_with_its_refresh_token_and_reads_its_textures() {
+    let (_m, ep) = mock(|_| {});
+    std::env::set_var("HORIZON_ELYBY_CLIENT_ID", "test-ely");
+    std::env::set_var("HORIZON_ELYBY_CLIENT_SECRET", "test-secret");
+    let signed_in = Secrets {
+        minecraft_token: "ely-access-1".into(),
+        minecraft_expires_at: 0,
+        provider: Provider::ElyBy,
+        ely_refresh: Some("ely-refresh-1".into()),
+        refresh_token: String::new(),
+        ..secrets("unused", true)
+    };
+    let checked = check(&ep, None, &notch(), signed_in);
+    std::env::remove_var("HORIZON_ELYBY_CLIENT_ID");
+    std::env::remove_var("HORIZON_ELYBY_CLIENT_SECRET");
+    let Check::Owns(renewed, kept) = checked else {
+        panic!("an ely.by account owns itself");
+    };
+    assert_eq!(
+        (
+            kept.minecraft_token.as_str(),
+            kept.ely_refresh.as_deref(),
+            kept.provider()
+        ),
+        ("ely-access-2", Some("ely-refresh-1"), Provider::ElyBy)
+    );
+    assert_eq!(
+        renewed
+            .skin
+            .as_ref()
+            .map(|(url, model)| (url.as_str(), model.as_str())),
+        Some(("http://ely.by/storage/skins/abc.png", "slim"))
+    );
+    assert_eq!(
+        renewed.cape.as_deref(),
+        Some("https://ely.by/storage/capes/cape.png")
+    );
 }
 
 /// An accounts.json with Notch signed in and playing, his secrets in `store`.
@@ -820,6 +903,8 @@ fn accounts_keep_secrets_in_the_store_only() {
         minecraft_expires_at: 1,
         xuid: None,
         owns: true,
+        provider: Provider::Microsoft,
+        ely_refresh: None,
     };
     accounts.add(&store, account.clone(), &secrets).unwrap();
     assert_eq!(accounts.selected(), Some(&account));
@@ -1122,6 +1207,8 @@ fn session_files_are_private_and_complete() {
         minecraft_expires_at: 1,
         xuid: Some("25".into()),
         owns: true,
+        provider: Provider::Microsoft,
+        ely_refresh: None,
     };
     let path = write_session_file(&dir, &account, &secrets).unwrap();
     let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
@@ -1141,6 +1228,35 @@ fn session_files_are_private_and_complete() {
     }
     let other = write_session_file(&dir, &account, &secrets).unwrap();
     assert_ne!(path, other);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn elyby_session_files_name_their_provider() {
+    let dir = std::env::temp_dir().join(format!("horizon-elyby-session-{}", std::process::id()));
+    let account = Account {
+        uuid: UUID.into(),
+        name: "Notch".into(),
+        skin: None,
+        cape: None,
+    };
+    let secrets = Secrets {
+        refresh_token: String::new(),
+        sign_in_required: false,
+        minecraft_token: "ely-token".into(),
+        minecraft_expires_at: 1,
+        xuid: None,
+        owns: true,
+        provider: Provider::ElyBy,
+        ely_refresh: Some("ely-refresh".into()),
+    };
+    let path = write_session_file(&dir, &account, &secrets).unwrap();
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(v["user_type"], "mojang");
+    assert_eq!(v["provider"], "elyby");
+    assert_eq!(v["access_token"], "ely-token");
+    // The OAuth refresh token never leaves the keychain.
+    assert!(!v.to_string().contains("ely-refresh"));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -2469,6 +2585,8 @@ fn splitscreen_stops_renewing_other_accounts_once_out_of_time() {
         xbox_user: url.clone(),
         xsts: url.clone(),
         minecraft: url,
+        ely_account: "http://127.0.0.1:9/ely/account".into(),
+        ely_auth: "http://127.0.0.1:9/ely/auth".into(),
     };
     let store = MemoryStore::default();
     let mut accounts = signed_in(&store, &secrets("mc-token", true));

@@ -12,7 +12,12 @@ impl Launcher {
     pub(super) fn glass_account(&mut self, cx: &mut Context<Self>) -> Div {
         let wide = self.window_width >= crate::glass_home::WIDE;
         let left = self.glass_who_plays();
-        let right = self.glass_microsoft_card(cx);
+        let right = div()
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .child(self.glass_microsoft_card(cx))
+            .child(self.glass_elyby_card(cx));
         if wide {
             div()
                 .flex()
@@ -37,7 +42,7 @@ impl Launcher {
             Some(a) => (
                 Some(a.uuid.clone()),
                 a.name.clone(),
-                (Tone::Live, tr("Microsoft account · online servers too")),
+                (Tone::Live, tr("Signed in · online servers too")),
             ),
             None => (
                 None,
@@ -193,5 +198,188 @@ impl Launcher {
                         )),
                 )
             })
+    }
+
+    /// The ely.by card: its OAuth2 page in the browser brings the account back to this computer.
+    fn glass_elyby_card(&mut self, cx: &mut Context<Self>) -> Div {
+        let t = self.theme;
+        let configured = account::ely_client().is_some();
+        let mine = self.sign_in_provider == Some(account::Provider::ElyBy);
+        let busy = mine
+            && matches!(
+                self.sign_in_state,
+                Some(SignInState::Starting | SignInState::Browser(_) | SignInState::Working(_))
+            );
+        let detail: AnyElement = if !configured {
+            div()
+                .child(tr(account::ELY_NOT_CONFIGURED))
+                .into_any_element()
+        } else if mine {
+            match &self.sign_in_state {
+                Some(SignInState::Starting) => {
+                    div().child(tr("Opening ely.by…")).into_any_element()
+                }
+                Some(SignInState::Browser(_)) => div()
+                    .child(tr("Finish signing in to ely.by in your browser."))
+                    .into_any_element(),
+                Some(SignInState::Working(phase)) => {
+                    div().child(tr(phase.label())).into_any_element()
+                }
+                Some(SignInState::Done(Ok(a))) => div()
+                    .child(trf("Signed in as {name}.", &[("name", &a.name)]))
+                    .into_any_element(),
+                Some(SignInState::Done(Err(e))) => div()
+                    .text_color(t.danger)
+                    .child(e.clone())
+                    .into_any_element(),
+                _ => div().child(tr("Add an ely.by account.")).into_any_element(),
+            }
+        } else {
+            div()
+                .child(tr(
+                    "ely.by is another Minecraft account service: its skins, capes and the online \
+                     servers that accept it.",
+                ))
+                .into_any_element()
+        };
+        let action: Option<AnyElement> = if !configured {
+            None
+        } else if let Some(SignInState::Browser(url)) = &self.sign_in_state {
+            if !mine {
+                None
+            } else {
+                let uri = url.clone();
+                Some(
+                    div()
+                        .flex()
+                        .gap(px(4.))
+                        .child(
+                            keyboard(
+                                div()
+                                    .id("glass-elyby-open")
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .h(px(44.))
+                                    .flex_1()
+                                    .rounded(px(radius::ROW))
+                                    .bg(white(0.08))
+                                    .cursor_pointer()
+                                    .hover(|s| s.opacity(0.9))
+                                    .font_family(horizon_theme::glass::FONT)
+                                    .text_size(px(14.))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(white(ink::FULL))
+                                    .child(tr("Open ely.by")),
+                                &t,
+                            )
+                            .on_click(move |_, _, cx| cx.open_url(&uri)),
+                        )
+                        .child(
+                            keyboard(
+                                div()
+                                    .id("glass-elyby-cancel")
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .h(px(44.))
+                                    .px(px(16.))
+                                    .rounded(px(radius::ROW))
+                                    .cursor_pointer()
+                                    .hover(|s| s.opacity(0.9))
+                                    .font_family(horizon_theme::glass::FONT)
+                                    .text_size(px(14.))
+                                    .text_color(white(0.65))
+                                    .child(tr("Cancel")),
+                                &t,
+                            )
+                            .on_click(cx.listener(
+                                |this, _: &ClickEvent, _, cx| {
+                                    this.cancel_sign_in();
+                                    cx.notify();
+                                },
+                            )),
+                        )
+                        .into_any_element(),
+                )
+            }
+        } else if busy {
+            Some(
+                keyboard(
+                    div()
+                        .id("glass-elyby-working-cancel")
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .h(px(48.))
+                        .w_full()
+                        .rounded(px(radius::ROW))
+                        .bg(white(0.08))
+                        .cursor_pointer()
+                        .hover(|s| s.opacity(0.9))
+                        .font_family(horizon_theme::glass::FONT)
+                        .text_size(px(15.))
+                        .text_color(white(ink::FULL))
+                        .child(tr("Cancel")),
+                    &t,
+                )
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.cancel_sign_in();
+                    cx.notify();
+                }))
+                .into_any_element(),
+            )
+        } else {
+            Some(
+                keyboard(
+                    div()
+                        .id("glass-elyby-sign-in")
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .h(px(48.))
+                        .w_full()
+                        .rounded(px(radius::ROW))
+                        .bg(white(0.10))
+                        .border_1()
+                        .border_color(white(0.16))
+                        .cursor_pointer()
+                        .hover(|s| s.opacity(0.9))
+                        .font_family(horizon_theme::glass::FONT)
+                        .text_size(px(15.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(white(ink::FULL))
+                        .child(tr("Sign in with ely.by")),
+                    &t,
+                )
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.start_elyby_sign_in();
+                    cx.notify();
+                }))
+                .into_any_element(),
+            )
+        };
+        div()
+            .flex()
+            .flex_col()
+            .rounded(px(16.))
+            .bg(white(0.045))
+            .p(px(24.))
+            .child(
+                div()
+                    .font_family(horizon_theme::glass::DISPLAY_FONT)
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_size(px(20.))
+                    .line_height(px(25.))
+                    .text_color(white(ink::FULL))
+                    .child("ely.by"),
+            )
+            .child(
+                ui::text(14., FontWeight::NORMAL, 0.65)
+                    .mt(px(8.))
+                    .line_height(px(21.7))
+                    .child(detail),
+            )
+            .children(action.map(|a| div().mt(px(20.)).child(a)))
     }
 }

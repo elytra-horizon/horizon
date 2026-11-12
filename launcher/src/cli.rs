@@ -116,6 +116,9 @@ enum AccountCmd {
         #[arg(long = "for")]
         target: Option<String>,
     },
+    /// Sign in with an ely.by account in your browser (OAuth2). It plays online servers that
+    /// accept ely.by, with its own name, skin and cape
+    Elyby,
     /// Renew an account's session now, even when its access token is still fresh
     Refresh { who: String },
     /// Renew an account's session for a game already running: prints the read-once session file
@@ -1907,15 +1910,18 @@ fn account_command(action: AccountCmd, as_json: bool) -> Result<(), String> {
                     "accounts": accounts.accounts.iter().map(|a| serde_json::json!({
                         "name": a.name, "uuid": a.uuid,
                         "selected": accounts.selected.as_ref() == Some(&a.uuid),
+                        "provider": account::provider_of(account::store(), &a.uuid),
                         "authentication": account::session::status(account::store(), &a.uuid),
                     })).collect::<Vec<_>>(),
                     "sign_in_configured": account::client_id().is_some(),
+                    "elyby_configured": account::ely_client().is_some(),
                     "owner": accounts.has_owner(account::store()),
                 }));
             } else if accounts.accounts.is_empty() {
                 println!(
-                    "No Microsoft account signed in. Play needs one that owns Minecraft: Java \
-                     Edition: horizon-launcher account sign-in"
+                    "No account signed in. Play needs a Microsoft account that owns Minecraft: \
+                     Java Edition (horizon-launcher account sign-in), or an ely.by account \
+                     (horizon-launcher account elyby)"
                 );
             } else {
                 for a in &accounts.accounts {
@@ -1930,7 +1936,16 @@ fn account_command(action: AccountCmd, as_json: bool) -> Result<(), String> {
                         account::session::State::Retry => format!(": {}", status.message),
                         _ => String::new(),
                     };
-                    println!("{mark} {}  {}  {}{why}", a.name, a.uuid, status.label());
+                    // Which service signed it in, when the keychain still knows.
+                    let provider = account::provider_of(account::store(), &a.uuid)
+                        .map(|p| format!("  {}", p.label()))
+                        .unwrap_or_default();
+                    println!(
+                        "{mark} {}  {}{provider}  {}{why}",
+                        a.name,
+                        a.uuid,
+                        status.label()
+                    );
                 }
                 if !accounts.has_owner(account::store()) {
                     println!(
@@ -1962,7 +1977,13 @@ fn account_command(action: AccountCmd, as_json: bool) -> Result<(), String> {
         }
         AccountCmd::SignIn { target: Some(who) } => {
             let a = find(&accounts, &who)?;
-            let sign_in = account::SignIn::start_for(a.clone());
+            let elyby =
+                account::provider_of(account::store(), &a.uuid) == Some(account::Provider::ElyBy);
+            let sign_in = if elyby {
+                account::SignIn::start_elyby_for(a.clone())
+            } else {
+                account::SignIn::start_for(a.clone())
+            };
             let mut shown = false;
             let signed_in = loop {
                 match sign_in.state() {
@@ -1980,6 +2001,17 @@ fn account_command(action: AccountCmd, as_json: bool) -> Result<(), String> {
                             );
                         }
                     }
+                    account::SignInState::Browser(url) if !shown => {
+                        shown = true;
+                        if as_json {
+                            json(serde_json::json!({ "link": url }));
+                        } else {
+                            eprintln!(
+                                "To sign {} in again with ely.by, open {url} in a browser",
+                                a.name
+                            );
+                        }
+                    }
                     account::SignInState::Done(result) => break result?,
                     _ => {}
                 }
@@ -1989,6 +2021,36 @@ fn account_command(action: AccountCmd, as_json: bool) -> Result<(), String> {
                 json(serde_json::json!({ "signed_in": signed_in.uuid }));
             } else {
                 println!("Signed in as {} again.", signed_in.name);
+            }
+        }
+        AccountCmd::Elyby => {
+            let sign_in = account::SignIn::start_elyby();
+            let mut shown = false;
+            let signed_in = loop {
+                match sign_in.state() {
+                    account::SignInState::Browser(url) if !shown => {
+                        shown = true;
+                        if as_json {
+                            json(serde_json::json!({ "link": url }));
+                        } else {
+                            eprintln!(
+                                "To add an ely.by account, open {url} in a browser and finish \
+                                 signing in there"
+                            );
+                        }
+                    }
+                    account::SignInState::Done(result) => break result?,
+                    _ => {}
+                }
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            };
+            if as_json {
+                json(serde_json::json!({ "signed_in": signed_in.uuid }));
+            } else {
+                println!("Signed in as {}.", signed_in.name);
+            }
+            if let Some(said) = account::no_keychain() {
+                eprintln!("{said}");
             }
         }
         AccountCmd::SignIn { target: None } => {
