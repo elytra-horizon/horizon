@@ -5,5 +5,6 @@
 MU4oiIQcCxkZvbwSjjXs7SySCuM6ywRQ3nGaJYZG0gw=
 # This fork's own release key: the launcher's update channel is elytra-horizon/horizon's releases
 # (launcher/src/backend.rs LAUNCHER_REPO), signed with the fork's RELEASE_SIGNING_KEY. Upstream's
-# key stays first: the game's releases keep installing from it.
-oz9hrSZfZZCuva/X0vrQzb+JzHBXfSrObTFOgFv9UUo=
+# key stays first: the game's releases keep installing from it. The private key's backup lives at
+# ~/.config/elytra-horizon/release-signing-key.base64 (owner's machine only, never in the repo).
+6Mu6bzv1zThSplFOZXrjh7i0ZMTjOPBZbxQO+Samdsk=
