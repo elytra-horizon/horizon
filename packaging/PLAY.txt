@@ -6,7 +6,7 @@ connected to Mojang Studios or Microsoft. Minecraft is a trademark of Mojang
 and Microsoft. This folder contains none of Minecraft's code, textures or
 sounds: Horizon prepares them from your own copy of Minecraft Java Edition.
 
-Playing through the Horizon launcher
+Playing through the Elytra Horizon launcher
   Nothing to do here: the launcher installed this folder, prepares the
   resources the first time you press Play, and starts the game. Use the
   launcher to update, play or run a server.
