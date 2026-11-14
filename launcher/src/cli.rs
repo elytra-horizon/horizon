@@ -873,7 +873,7 @@ enum Cmd {
         #[arg(long)]
         check: bool,
     },
-    /// Linux: put Horizon in the applications menu (an entry and the icon, under
+    /// Linux: put Elytra Horizon in the applications menu (an entry and the icon, under
     /// $XDG_DATA_HOME), or take it out with --remove
     DesktopEntry {
         /// Remove the entry and the icon, and stop adding them back
@@ -1730,10 +1730,10 @@ fn execute(command: Cmd, as_json: bool) -> Result<(), String> {
             settings.save()?;
             if remove {
                 horizon_launcher::desktop::remove()?;
-                println!("Removed Horizon from the applications menu.");
+                println!("Removed Elytra Horizon from the applications menu.");
             } else {
                 horizon_launcher::desktop::install(backend::exe_path())?;
-                println!("Horizon is in the applications menu.");
+                println!("Elytra Horizon is in the applications menu.");
             }
         }
         Cmd::Worlds { action } => worlds(

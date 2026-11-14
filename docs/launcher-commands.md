@@ -268,7 +268,7 @@ MCP: `update`.
 
 ## `horizon-launcher desktop-entry`
 
-Linux: put Horizon in the applications menu (an entry and the icon, under $XDG_DATA_HOME), or take it out with --remove.
+Linux: put Elytra Horizon in the applications menu (an entry and the icon, under $XDG_DATA_HOME), or take it out with --remove.
 
     horizon-launcher desktop-entry
 

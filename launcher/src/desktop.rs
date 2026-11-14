@@ -203,14 +203,35 @@ fn target_exists(program: &str, path: Option<&OsStr>) -> bool {
     path.is_some_and(|dirs| std::env::split_paths(dirs).any(|dir| dir.join(program).is_file()))
 }
 
-/// Whether the launcher may write its entry by itself: there is none under `data`, or the one
-/// there starts a program that no longer exists. An entry pointing at another launcher that
-/// still works is left alone.
+/// Whether the launcher may write its entry by itself: there is none under `data`, the one
+/// there starts a program that no longer exists, or it still carries the old product name. An
+/// entry pointing at another launcher that still works is left alone.
 pub fn needs_repair_in(data: &Path, path: Option<&OsStr>) -> bool {
     match fs::read_to_string(data.join("applications").join(LAUNCHER_ENTRY)) {
-        Ok(entry) => !entry_target(&entry).is_some_and(|p| target_exists(&p, path)),
+        Ok(entry) => {
+            let renamed = matches!(
+                entry_name(&entry).as_deref(),
+                Some("Horizon" | "Horizon Launcher")
+            );
+            renamed || !entry_target(&entry).is_some_and(|p| target_exists(&p, path))
+        }
         Err(e) => e.kind() == io::ErrorKind::NotFound,
     }
+}
+
+/// A desktop entry's `Name=`, if it has one.
+fn entry_name(entry: &str) -> Option<String> {
+    let mut in_main = false;
+    for line in entry.lines().map(str::trim) {
+        if line.starts_with('[') {
+            in_main = line == "[Desktop Entry]";
+        } else if in_main {
+            if let Some(name) = line.strip_prefix("Name=") {
+                return Some(name.trim().to_owned());
+            }
+        }
+    }
+    None
 }
 
 /// What the entry starts: a distributor's wrapper (`HORIZON_LAUNCHER_DESKTOP_EXEC`) when one is
@@ -327,6 +348,13 @@ mod tests {
         install_in(&data, &installed).unwrap();
         // Ours works: a build elsewhere leaves it alone.
         assert!(!needs_repair_in(&data, path));
+        // One from before the rename still names the old product: write it again.
+        let old = fs::read_to_string(&entry)
+            .unwrap()
+            .replace("Name=Elytra Horizon", "Name=Horizon");
+        fs::write(&entry, old).unwrap();
+        assert!(needs_repair_in(&data, path));
+        install_in(&data, &installed).unwrap();
         // So does one another launcher wrote, found on PATH or by its path.
         fs::write(&entry, "[Desktop Entry]\nExec=horizon-launcher %U\n").unwrap();
         assert!(!needs_repair_in(&data, path));
