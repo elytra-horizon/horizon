@@ -40,7 +40,7 @@ fn a_linux_entry_plays_its_instance() {
 #[test]
 fn a_mac_app_runs_a_script_that_plays_its_instance() {
     let files = mac_app(
-        Path::new("/Applications/Horizon Launcher.app/Contents/MacOS/horizon-launcher"),
+        Path::new("/Applications/Elytra Horizon.app/Contents/MacOS/horizon-launcher"),
         "it's",
         "Tom & Jerry",
     );
@@ -52,7 +52,7 @@ fn a_mac_app_runs_a_script_that_plays_its_instance() {
     let (path, script, program) = &files[1];
     assert_eq!((*path, *program), ("Contents/MacOS/play", true));
     assert!(String::from_utf8(script.clone()).unwrap().ends_with(
-        "exec '/Applications/Horizon Launcher.app/Contents/MacOS/horizon-launcher' play \
+        "exec '/Applications/Elytra Horizon.app/Contents/MacOS/horizon-launcher' play \
          --instance 'it'\\''s'\n"
     ));
     assert_eq!(files[2].1, MAC_ICON);

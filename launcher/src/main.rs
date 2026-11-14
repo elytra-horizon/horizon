@@ -1,4 +1,4 @@
-//! Horizon launcher: installs Horizon builds, prepares them from the player's own Minecraft,
+//! Elytra Horizon launcher: installs Horizon builds, prepares them from the player's own Minecraft,
 //! and starts the client or a dedicated server.
 
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
@@ -1645,7 +1645,7 @@ impl Launcher {
         for home in homes {
             match backend::switch_from_auto(&home, api) {
                 Ok(changed) => switched |= changed,
-                Err(e) => eprintln!("Horizon launcher: could not switch to {label}: {e}"),
+                Err(e) => eprintln!("Elytra Horizon: could not switch to {label}: {e}"),
             }
         }
         switched.then_some(label)
@@ -4497,8 +4497,13 @@ impl Launcher {
                 );
             }
             // Only ely.by can be signed in again; a Microsoft account here can be refreshed
-            // from its saved token, or signed out.
-            let provider = account::provider_of(account::store(), &a.uuid);
+            // from its saved token, or signed out. The status worker's provider avoids a
+            // keychain read on every frame.
+            let provider = if offline {
+                Some(account::Provider::Offline)
+            } else {
+                self.auth_status.get(&uuid).and_then(|s| s.provider)
+            };
             let sign_in_progress = self
                 .sign_in_target
                 .as_ref()
@@ -5705,8 +5710,8 @@ fn page_after_startup(page: Page, data_folder_failed: bool) -> Page {
 fn menus() -> Vec<Menu> {
     vec![
         Menu {
-            name: "Horizon Launcher".into(),
-            items: vec![MenuItem::action("Quit Horizon Launcher", Quit)],
+            name: "Elytra Horizon".into(),
+            items: vec![MenuItem::action("Quit Elytra Horizon", Quit)],
             disabled: false,
         },
         Menu {
@@ -5999,10 +6004,10 @@ mod tests {
     #[test]
     fn the_app_menu_has_quit() {
         let menus = super::menus();
-        assert_eq!(menus[0].name, "Horizon Launcher");
+        assert_eq!(menus[0].name, "Elytra Horizon");
         assert!(matches!(
             &menus[0].items[0],
-            gpui::MenuItem::Action { name, .. } if name == "Quit Horizon Launcher"
+            gpui::MenuItem::Action { name, .. } if name == "Quit Elytra Horizon"
         ));
     }
 

@@ -387,7 +387,7 @@ impl Launcher {
             ))
             .child(tile(
                 launcher_mark,
-                tr("Launcher").to_string(),
+                "Elytra Horizon".into(),
                 launcher,
                 div().children(launcher_action).into_any_element(),
             ))
@@ -487,7 +487,7 @@ impl Launcher {
                     0,
                     tr("Applications menu"),
                     note(if self.settings.desktop_entry() {
-                        "Horizon and its icon are in your desktop's menu."
+                        "Elytra Horizon and its icon are in your desktop's menu."
                     } else {
                         "Not in your desktop's menu."
                     }),

@@ -1313,7 +1313,7 @@ impl SecretStore for SystemStore {
             let attributes = vec![("service", SERVICE), ("account", key)];
             keyring
                 .create_item(
-                    "Horizon launcher: Minecraft account",
+                    "Elytra Horizon: Minecraft account",
                     &attributes,
                     secret.as_bytes(),
                     true,

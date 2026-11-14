@@ -1,4 +1,4 @@
-# Horizon launcher
+# Elytra Horizon launcher
 
 A small desktop app that installs Horizon builds, prepares them from your own copy of
 Minecraft, and starts the client or a dedicated server. Built with [GPUI Fast](https://github.com/longbridge/gpui-fast),

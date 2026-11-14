@@ -280,9 +280,10 @@ pub(super) fn wait_for_code(
     }
 }
 
-const DONE_PAGE: &str = "<!doctype html><meta charset=\"utf-8\"><title>Horizon</title><body \
+const DONE_PAGE: &str =
+    "<!doctype html><meta charset=\"utf-8\"><title>Elytra Horizon</title><body \
 style=\"font-family:sans-serif;background:#100a1f;color:#fff;text-align:center;padding-top:20vh\">\
-<h1>Signed in to ely.by</h1><p>You can close this window and return to Horizon.</p></body>";
+<h1>Signed in to ely.by</h1><p>You can close this window and return to Elytra Horizon.</p></body>";
 
 fn respond(stream: &mut std::net::TcpStream, status: u16, body: &str) {
     let _ = std::io::Write::write_all(

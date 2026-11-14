@@ -3673,7 +3673,7 @@ pub fn remove_replaced_binaries() {
     });
 }
 
-/// The app bundle the launcher runs from (`…/Horizon.app` for `…/Horizon.app/Contents/MacOS/
+/// The app bundle the launcher runs from (`…/Elytra Horizon.app` for `…/Elytra Horizon.app/Contents/MacOS/
 /// horizon-launcher`), or None for a bare binary, as launchers before the .app shipped.
 pub fn app_bundle(exe: &Path) -> Option<&Path> {
     let macos = exe.parent()?;
@@ -4006,9 +4006,9 @@ fn fill_stage(
     }
     let unpacked = stage.join(UNPACKED);
     unpack(&archive, url, &unpacked)?;
-    // A launcher inside Horizon.app replaces the whole bundle (its Info.plist, icon and
+    // A launcher inside Elytra Horizon.app replaces the whole bundle (its Info.plist, icon and
     // signature belong with the binary); a bare binary, as older launchers are, only the binary,
-    // which the macOS archive also holds (Horizon.app/Contents/MacOS/horizon-launcher).
+    // which the macOS archive also holds (Elytra Horizon.app/Contents/MacOS/horizon-launcher).
     if app_bundle(exe_path()).is_some() {
         if let Some(new) = find_app(&unpacked) {
             return staged(new);

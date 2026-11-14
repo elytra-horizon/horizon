@@ -53,6 +53,8 @@ pub enum State {
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct Status {
     pub state: State,
+    /// Which service the saved sign-in belongs to; none when it could not be read.
+    pub provider: Option<Provider>,
     pub expires_at: Option<u64>,
     pub message: String,
 }
@@ -77,6 +79,7 @@ impl Status {
             } else {
                 State::Retry
             },
+            provider: None,
             expires_at: None,
             message: message.into(),
         }
@@ -94,6 +97,7 @@ impl Status {
         };
         let mut status = Self {
             state,
+            provider: secrets.map(|s| s.provider),
             expires_at: secrets
                 .filter(|s| s.provider != Provider::Offline)
                 .map(|s| s.minecraft_expires_at),

@@ -1,16 +1,22 @@
 //! Who plays: the top bar's quick switch (a menu under the account chip) between the signed-in
-//! Microsoft accounts.
+//! ely.by and offline accounts.
 use super::*;
 
 impl Launcher {
+    /// Which service an account signs in through. An offline account is its name's offline UUID,
+    /// so no keychain read is needed to say so; the others come from the status loaded off the
+    /// UI thread, and stay unknown until it arrives.
+    fn provider_of(&self, a: &account::Account) -> Option<account::Provider> {
+        if a.uuid == account::offline::uuid(&a.name) {
+            return Some(account::Provider::Offline);
+        }
+        self.auth_status.get(&a.uuid).and_then(|s| s.provider)
+    }
+
     /// The chip's two lines: the name that plays, and how.
     pub(super) fn who_plays(&self) -> (String, &'static str) {
         match self.accounts.selected() {
-            // An offline account is its name's offline UUID: no keychain read is needed to say so.
-            Some(a) if a.uuid == account::offline::uuid(&a.name) => {
-                (a.name.clone(), tr("Offline account"))
-            }
-            Some(a) => (a.name.clone(), tr("Minecraft account")),
+            Some(a) => (a.name.clone(), tr(kind(self.provider_of(a)))),
             None => (tr("Add an account").to_string(), tr("No account yet")),
         }
     }
@@ -30,7 +36,13 @@ impl Launcher {
         self.accounts
             .accounts
             .iter()
-            .map(|a| (a.uuid.clone(), a.name.clone(), tr("Microsoft")))
+            .map(|a| {
+                (
+                    a.uuid.clone(),
+                    a.name.clone(),
+                    tr(short(self.provider_of(a))),
+                )
+            })
             .collect()
     }
 
@@ -113,5 +125,45 @@ impl Launcher {
                 })),
         );
         Some(gpui::deferred(menu).with_priority(1))
+    }
+}
+
+/// How an account signs in, for the chip under the player's name.
+fn kind(provider: Option<account::Provider>) -> &'static str {
+    match provider {
+        Some(account::Provider::ElyBy) => "ely.by account",
+        Some(account::Provider::Microsoft) => "Microsoft account",
+        Some(account::Provider::Offline) => "Offline account",
+        None => "Account",
+    }
+}
+
+/// How an account signs in, short enough for a menu row.
+fn short(provider: Option<account::Provider>) -> &'static str {
+    match provider {
+        Some(account::Provider::ElyBy) => "ely.by",
+        Some(account::Provider::Microsoft) => "Microsoft",
+        Some(account::Provider::Offline) => "Offline",
+        None => "Account",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_service_has_its_own_name() {
+        assert_eq!(kind(Some(account::Provider::ElyBy)), "ely.by account");
+        assert_eq!(
+            kind(Some(account::Provider::Microsoft)),
+            "Microsoft account"
+        );
+        assert_eq!(kind(Some(account::Provider::Offline)), "Offline account");
+        assert_eq!(kind(None), "Account");
+        assert_eq!(short(Some(account::Provider::ElyBy)), "ely.by");
+        assert_eq!(short(Some(account::Provider::Microsoft)), "Microsoft");
+        assert_eq!(short(Some(account::Provider::Offline)), "Offline");
+        assert_eq!(short(None), "Account");
     }
 }

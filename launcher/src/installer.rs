@@ -8,6 +8,8 @@
 //!
 //! Nothing here deletes a folder it didn't make: the install folder is always called
 //! "Horizon Launcher" ([`folder_for`]) and is removed with `remove_dir`, which only takes an empty one.
+//! The folder keeps that technical name; the shortcut, the Uninstall entry and the window say
+//! [`DISPLAY_NAME`].
 //!
 //! Command lines (handled in `main` before the CLI parser, so MCP never sees them):
 //! `horizon-launcher-setup.exe` (window), `... setup --quiet [--dir <folder>] [--desktop-shortcut]`,
@@ -21,9 +23,12 @@ use std::path::{Path, PathBuf};
 use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_WRITE};
 use winreg::RegKey;
 
+/// The folder the launcher installs into. Kept for compatibility with earlier installs.
 pub const APP_NAME: &str = "Horizon Launcher";
+/// What the shortcut, the Uninstall entry and the window call this launcher.
+pub const DISPLAY_NAME: &str = "Elytra Horizon";
 const BINARY: &str = "horizon-launcher.exe";
-const PUBLISHER: &str = "Horizon";
+const PUBLISHER: &str = "Elytra Horizon";
 const ABOUT_URL: &str = "https://playhorizon.dev";
 const UNINSTALL_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\HorizonLauncher";
 const OWN_KEY: &str = r"Software\Horizon\Launcher";
@@ -157,16 +162,27 @@ fn start_menu_link() -> Option<PathBuf> {
     std::env::var_os("APPDATA").map(|a| {
         PathBuf::from(a)
             .join(r"Microsoft\Windows\Start Menu\Programs")
-            .join(format!("{APP_NAME}.lnk"))
+            .join(format!("{DISPLAY_NAME}.lnk"))
     })
 }
 
 fn desktop_link() -> Option<PathBuf> {
-    shortcut::desktop_dir().map(|d| d.join(format!("{APP_NAME}.lnk")))
+    shortcut::desktop_dir().map(|d| d.join(format!("{DISPLAY_NAME}.lnk")))
 }
 
 fn write_link(path: &Path, exe: &Path) -> io::Result<()> {
-    shortcut::write_windows_link(path, exe, "", APP_NAME).map_err(io::Error::other)
+    shortcut::write_windows_link(path, exe, "", DISPLAY_NAME).map_err(io::Error::other)
+}
+
+/// Drops the shortcuts earlier versions made under the install folder's name, so an update
+/// leaves one Start menu entry, not two.
+fn remove_old_links(exe: &Path) {
+    for link in [start_menu_link(), desktop_link()].into_iter().flatten() {
+        let old = link.with_file_name(format!("{APP_NAME}.lnk"));
+        if old != link && points_to(&old, exe) {
+            let _ = fs::remove_file(old);
+        }
+    }
 }
 
 /// Whether the shortcut file names `exe` (its path, as the Shell Link keeps it, in UTF-16).
@@ -233,7 +249,7 @@ fn register(dir: &Path, exe: &Path, version: &str) -> io::Result<()> {
     let (key, _) = hkcu.create_subkey(UNINSTALL_KEY)?;
     let exe_s = exe.to_string_lossy().to_string();
     let text = |name: &str, value: &str| key.set_value(name, &value.to_string());
-    text("DisplayName", APP_NAME)?;
+    text("DisplayName", DISPLAY_NAME)?;
     text("DisplayVersion", version)?;
     text("Publisher", PUBLISHER)?;
     text("InstallLocation", &dir.to_string_lossy())?;
@@ -336,6 +352,7 @@ pub fn install(options: &Options, progress: impl Fn(Step, f32)) -> Result<PathBu
         place(&source, &exe).map_err(|e| format!("{}: {e}", exe.display()))?;
     }
     progress(Step::Shortcuts, 0.6);
+    remove_old_links(&exe);
     if let Some(link) = start_menu_link() {
         write_link(&link, &exe).map_err(|e| format!("{}: {e}", link.display()))?;
     }
@@ -452,7 +469,7 @@ fn builds_are_launchers(builds: &Path, data: &Path, location: Option<&Roots>) ->
 /// Takes the install away. Returns what could not be removed (a file in use, say).
 pub fn uninstall(remove_data: bool, progress: impl Fn(Step, f32)) -> Result<Vec<String>, String> {
     let dir = registered()
-        .ok_or("Horizon Launcher is not installed for this account.")?
+        .ok_or("Elytra Horizon is not installed for this account.")?
         .dir;
     close_running_launchers(&progress);
     clean_aside(&dir);
@@ -461,8 +478,14 @@ pub fn uninstall(remove_data: bool, progress: impl Fn(Step, f32)) -> Result<Vec<
     let mut left = Vec::new();
 
     progress(Step::Shortcuts, 0.15);
-    if let Some(link) = start_menu_link().filter(|l| points_to(l, &exe)) {
-        remove_file(&link, &mut left);
+    // Both named shortcuts: an earlier version wrote one called `APP_NAME`.
+    if let Some(link) = start_menu_link() {
+        let old = link.with_file_name(format!("{APP_NAME}.lnk"));
+        for link in [link, old] {
+            if points_to(&link, &exe) {
+                remove_file(&link, &mut left);
+            }
+        }
     }
     // The desktop's shortcuts to this launcher: its own and the ones that play one instance.
     if let Some(desktop) = shortcut::desktop_dir() {
