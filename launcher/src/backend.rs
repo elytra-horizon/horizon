@@ -11,6 +11,9 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
 pub const REPO: &str = "horizon-rust/horizon";
+/// Where this fork's launcher updates come from: its own releases carry the ely.by and offline
+/// accounts, which upstream's launcher releases do not. The game still installs from [`REPO`]'s.
+pub const LAUNCHER_REPO: &str = "elytra-horizon/horizon";
 pub const README_URL: &str = "https://github.com/horizon-rust/horizon/blob/main/launcher/README.md";
 /// The players' page on connecting an AI agent (the website's docs/agents.md).
 pub const AGENT_DOCS_URL: &str = "https://playhorizon.dev/docs/agents";
@@ -784,6 +787,17 @@ fn launcher_releases_in(list: &serde_json::Value) -> Vec<Release> {
     launcher_releases_in_with(list, |url| crate::github::json(&url))
 }
 
+/// The launcher's own update channel: [`LAUNCHER_REPO`]'s releases, newest first. Empty when
+/// GitHub doesn't answer, never upstream's launcher releases, which lack this fork's ely.by and
+/// offline accounts: installing one would silently remove them.
+fn launcher_releases() -> Vec<Release> {
+    crate::github::json(&format!(
+        "https://api.github.com/repos/{LAUNCHER_REPO}/releases?per_page=100"
+    ))
+    .map(|list| launcher_releases_in(&list))
+    .unwrap_or_default()
+}
+
 fn launcher_releases_in_with(
     list: &serde_json::Value,
     json: impl Fn(String) -> Result<serde_json::Value, String>,
@@ -792,7 +806,7 @@ fn launcher_releases_in_with(
     if found.iter().any(|r| r.asset.is_some()) {
         return found;
     }
-    let api = format!("https://api.github.com/repos/{REPO}");
+    let api = format!("https://api.github.com/repos/{LAUNCHER_REPO}");
     let mut tags = Vec::new();
     for prefix in [LAUNCHER_TAG_PREFIX, OLD_LAUNCHER_TAG_PREFIX] {
         // Every `launcher@` tag is newer than every `launcher-v` one: those only when there is none.
@@ -1103,9 +1117,11 @@ pub(crate) fn fetch_small(url: &str) -> Result<Option<Vec<u8>>, String> {
     Ok(Some(body))
 }
 
-/// The SHA-256 the release's signed checksums give for `asset`, or why it must not be installed.
-fn signed_digest(tag: &str, asset: &str) -> Result<String, String> {
-    crate::signed::digest(
+/// The SHA-256 the release's signed checksums give for `asset` in `repo`, or why it must not be
+/// installed.
+fn signed_digest(repo: &str, tag: &str, asset: &str) -> Result<String, String> {
+    crate::signed::digest_in(
+        repo,
         tag,
         asset,
         &horizon_release_sign::trusted_keys(),
@@ -1237,7 +1253,7 @@ pub fn install(release: &Release, progress: impl Fn(f32)) -> Result<(), String> 
                 fetch_small,
             )?
         }
-        None if is_game_tag(tag) => signed_digest(tag, asset)?,
+        None if is_game_tag(tag) => signed_digest(REPO, tag, asset)?,
         None => return Err(format!("{tag} is not a Horizon release.")),
     };
     install_as(
@@ -3356,13 +3372,14 @@ fn launcher_update_from(releases: &[Release], own: &str) -> Option<Release> {
         .cloned()
 }
 
-/// Load the game's release list and both update kinds from the same GitHub response.
-/// Publish the game releases before any fallback lookups for older launcher tags, so those
-/// lookups cannot hold up the release pages or opening animation. A list error reaches both.
+/// Load the game's release list and both update kinds: the game's from one GitHub response
+/// ([`release_list`]), the launcher's from its own channel ([`LAUNCHER_REPO`], [`launcher_releases`]).
+/// Publish the game releases before the launcher's lookups, so those cannot hold up the release
+/// pages or opening animation. A game list error reaches both; a launcher one only drops its update.
 pub fn releases_and_updates(
     on_releases: impl FnOnce(Result<Vec<Release>, String>),
 ) -> Result<Updates, String> {
-    releases_and_updates_with(release_list, installed, launcher_releases_in, on_releases)
+    releases_and_updates_with(release_list, installed, |_| launcher_releases(), on_releases)
 }
 
 fn releases_and_updates_with(
@@ -3546,14 +3563,12 @@ fn launcher_asset_running_from(appimage: bool) -> Option<&'static str> {
     }
 }
 
-/// This fork's launcher carries ely.by and offline accounts that the upstream releases it checks
-/// for updates do not: replacing itself with one would silently remove them. So a release build
-/// here replaces itself only when `HORIZON_LAUNCHER_ALLOW_SELF_UPDATE` says so, and
-/// `HORIZON_LAUNCHER_NO_SELF_UPDATE` still turns that off. Game updates are not affected.
+/// Development builds and `HORIZON_LAUNCHER_NO_SELF_UPDATE` never replace themselves. A release
+/// build replaces itself with newer releases of [`LAUNCHER_REPO`], whose builds keep this fork's
+/// ely.by and offline accounts (upstream's launcher releases are never offered). Game updates are
+/// not affected.
 pub fn self_update_allowed() -> bool {
-    !cfg!(debug_assertions)
-        && std::env::var_os("HORIZON_LAUNCHER_NO_SELF_UPDATE").is_none()
-        && std::env::var_os("HORIZON_LAUNCHER_ALLOW_SELF_UPDATE").is_some()
+    !cfg!(debug_assertions) && std::env::var_os("HORIZON_LAUNCHER_NO_SELF_UPDATE").is_none()
 }
 
 /// The version in `horizon-launcher --version`'s output (`horizon-launcher 0.1.5`).
@@ -3965,7 +3980,11 @@ pub fn stage_update(release: &Release, progress: impl Fn(f32)) -> Result<Option<
     {
         return Ok(None);
     }
-    let sha256 = signed_digest(&release.tag, launcher_asset().unwrap_or_default())?;
+    let sha256 = signed_digest(
+        LAUNCHER_REPO,
+        &release.tag,
+        launcher_asset().unwrap_or_default(),
+    )?;
     let work = update_work_dir();
     remove_abandoned_stages(&work, std::time::SystemTime::now(), process_alive);
     let stage = new_stage_folder(&work)?;

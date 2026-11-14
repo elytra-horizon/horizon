@@ -1,11 +1,15 @@
 {
   "_doc": "docs/layers.md#built-in-addresses. Where each built-in outside address may be (tools/check_addresses.py). 'allowed' lists today's addresses outside a home: entries only go away or move with their code.",
   "homes": [
-    "crates/horizon-addresses/src/lib.rs"
+    "crates/horizon-addresses/src/lib.rs",
+    "crates/horizon-client-render/src/auth.rs",
+    "crates/horizon-client-render/src/skins.rs",
+    "launcher/src/account.rs"
   ],
   "vanilla": {
     "aka.ms": "vanilla's help links (CommonLinks), opened on a click",
     "api.minecraftservices.com": "Minecraft services: profile, keys, certificates",
+    "api.mojang.com": "names' UUIDs, as the vanilla launcher looks them up",
     "discovery.minecraftservices.com": "MinecraftServicesEnvironment.PROD's discovery document",
     "textures.minecraft.net": "skins and capes",
     "sessionserver.mojang.com": "profiles and joins",
