@@ -1115,7 +1115,36 @@ fn serve_login(
                     .unwrap_or_default();
                 (owner_uuid, properties)
             }
-            None => (offline_uuid(&hello.name), Vec::new()),
+            None => {
+                // An offline player shows the skin of the player of the same name (ely.by
+                // first, then Mojang): its profile's properties go with the login, so the
+                // others see it. Fetched off the login thread on a short leash — a slow
+                // skins service must not hold the login (vanilla's client gives up after
+                // 30 s of silence) — and a bare profile when it doesn't answer. A memory
+                // player (a splitscreen seat) stays bare, as before.
+                if c.is_memory() {
+                    (offline_uuid(&hello.name), Vec::new())
+                } else {
+                    let (tx, rx) = channel();
+                    let borrowed_name = hello.name.clone();
+                    std::thread::spawn(move || {
+                        let _ = tx.send(horizon_client::skins::offline_profile_properties(
+                            &borrowed_name,
+                        ));
+                    });
+                    let properties = rx
+                        .recv_timeout(Duration::from_secs(5))
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|(name, value, signature)| login::Property {
+                            name,
+                            value,
+                            signature,
+                        })
+                        .collect();
+                    (offline_uuid(&hello.name), properties)
+                }
+            }
         },
     };
     // The mods may hold the login for their answers, or refuse it, before the server's checks.

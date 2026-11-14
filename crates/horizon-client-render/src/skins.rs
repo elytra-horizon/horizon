@@ -47,16 +47,11 @@ pub fn texture_uris() -> &'static [String] {
             .and_then(|doc| discovery_texture_uris(&doc))
             .unwrap_or_else(|| TEXTURE_URIS.map(str::to_owned).to_vec());
         // An ely.by account's skin and cape live on ely.by (its authlib-injector `skinDomains`),
-        // and an offline account takes the skin of a player of the same name from there too.
-        if crate::auth::current().is_some_and(|s| {
-            matches!(
-                s.provider(),
-                crate::auth::Provider::ElyBy | crate::auth::Provider::Offline
-            )
-        }) {
-            uris.push("http://ely.by/{textureId}".into());
-            uris.push("https://ely.by/{textureId}".into());
-        }
+        // an offline account takes the skin of a player of the same name from there, and an
+        // offline server hands the ely.by properties of the player of the same name to everyone
+        // — so every viewer accepts those texture URLs, whatever they signed in as.
+        uris.push("http://ely.by/{textureId}".into());
+        uris.push("https://ely.by/{textureId}".into());
         uris
     })
 }
