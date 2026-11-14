@@ -205,25 +205,35 @@ pub fn offline_textures(name: &str) -> Option<Textures> {
 }
 
 /// The `properties` of the profile named `name` (the player an offline account borrows its skin
-/// from), from ely.by or Mojang, and the profile's UUID. Empty when neither knows the name.
+/// from), from ely.by or Mojang, and the profile's UUID. Empty when neither knows the name, and
+/// ely.by's player of the name gives way to Mojang's when it wears no skin.
 pub fn offline_profile_properties(name: &str) -> Vec<(String, String, Option<String>)> {
-    let profile = offline_profile(name).or_else(|| mojang_profile(name));
-    profile
-        .and_then(|p| {
-            p.get("properties")?
-                .as_array()?
-                .iter()
-                .map(|p| {
-                    Some((
-                        p.get("name")?.as_str()?.to_owned(),
-                        p.get("value")?.as_str()?.to_owned(),
-                        p.get("signature")
-                            .and_then(|s| s.as_str())
-                            .map(str::to_owned),
-                    ))
-                })
-                .collect::<Option<Vec<_>>>()
-        })
+    fn properties_of(p: &serde_json::Value) -> Vec<(String, String, Option<String>)> {
+        p.get("properties")
+            .and_then(|props| props.as_array())
+            .and_then(|props| {
+                props
+                    .iter()
+                    .map(|p| {
+                        Some((
+                            p.get("name")?.as_str()?.to_owned(),
+                            p.get("value")?.as_str()?.to_owned(),
+                            p.get("signature")
+                                .and_then(|s| s.as_str())
+                                .map(str::to_owned),
+                        ))
+                    })
+                    .collect::<Option<Vec<_>>>()
+            })
+            .unwrap_or_default()
+    }
+    // ely.by first; a player that knows the name but wears no skin (no properties —
+    // its session profile lists none) is not an answer: Mojang's same-named player is.
+    let elyby = offline_profile(name)
+        .map(|p| properties_of(&p))
+        .filter(|props| !props.is_empty());
+    elyby
+        .or_else(|| mojang_profile(name).map(|p| properties_of(&p)))
         .unwrap_or_default()
 }
 
