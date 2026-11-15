@@ -82,7 +82,7 @@ jobs:
         run: echo "dry_run=${{ github.ref != 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.dry_run) }}" >> "$GITHUB_OUTPUT"
       - id: decide
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
           RELEASES_PAUSED: ${{ vars.RELEASES_PAUSED }}
           # A push or a run off main builds its own commit; otherwise main's newest commit with green checks.
           HEAD_SHA: ${{ (github.event_name == 'push' || steps.mode.outputs.dry_run == 'true') && github.sha || '' }}
@@ -390,7 +390,7 @@ jobs:
           fetch-depth: 0
       - name: Notes
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
         run: |
           python3 tools/release_train.py notes --kind launcher --tag "${{ needs.decide.outputs.tag }}" \
             --head "${{ needs.decide.outputs.head }}" --out notes > /dev/null
@@ -417,7 +417,7 @@ jobs:
       - name: Publish ${{ needs.decide.outputs.tag }}
         if: needs.decide.outputs.dry_run != 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
           TAG: ${{ needs.decide.outputs.tag }}
         run: |
           shopt -s nullglob
