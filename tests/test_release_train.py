@@ -153,6 +153,8 @@ class ReleaseTrainTests(unittest.TestCase):
         queries = []
 
         def gh_json(*arguments):
+            if arguments[0] == "pr":
+                return [{"number": number} for number in range(1, 121)]
             query = arguments[-1]
             queries.append(query)
             numbers = [int(n) for n in re.findall(r"pullRequest\(number: (\d+)\)", query)]
@@ -169,6 +171,23 @@ class ReleaseTrainTests(unittest.TestCase):
         self.assertEqual(prs[0]["title"], "PR 1")
         self.assertEqual((prs[0]["labels"], prs[0]["issues"], prs[0]["author"]), (["feature"], [2], "a"))
         self.assertEqual(prs[0]["merged_at"].isoformat(), "2026-11-12T10:00:00+00:00")
+
+    def test_pull_requests_the_repository_lacks_are_left_out(self):
+        """A fork's main carries merges synced from upstream, whose pull requests it does not have:
+        one missing number must not fail the whole batch nor hold the release."""
+        def gh_json(*arguments):
+            if arguments[0] == "pr":
+                return [{"number": 1}]
+            query = arguments[-1]
+            number = int(re.search(r"pullRequest\(number: (\d+)\)", query).group(1))
+            return {"data": {"repository": {f"p{number}": {
+                "number": number, "title": f" PR {number} ", "url": f"u/{number}",
+                "mergedAt": "2026-11-12T10:00:00Z", "author": {"login": "a"},
+                "labels": {"nodes": []}, "closingIssuesReferences": {"nodes": []}}}}}
+
+        with mock.patch.object(train, "gh_json", gh_json):
+            prs = train.pull_requests([15999, 1, 2])
+        self.assertEqual([pr["number"] for pr in prs], [1])
 
     def test_game_releases_ship_only_what_parity_main_passed(self):
         def runs(parity, checks):

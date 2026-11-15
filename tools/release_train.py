@@ -244,8 +244,13 @@ PR_FIELDS = ("number title url mergedAt author { login } labels(first: 30) { nod
 
 
 def pull_requests(numbers):
-    """The pull requests with these numbers, in that order: one GraphQL query per PR_BATCH of them."""
+    """The pull requests with these numbers, in that order: one GraphQL query per PR_BATCH of them.
+    Numbers the repository does not resolve are left out: a fork's main carries merges synced from
+    upstream, whose pull requests it does not have, and one missing number fails the whole batch."""
     owner, name = REPO.split("/")
+    known = {pr["number"] for pr in gh_json("pr", "list", "--repo", REPO, "--state", "all",
+                                            "--limit", "1000", "--json", "number")}
+    numbers = [number for number in numbers if number in known]
     found, unique = {}, list(dict.fromkeys(numbers))
     for start in range(0, len(unique), PR_BATCH):
         chunk = unique[start:start + PR_BATCH]
