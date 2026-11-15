@@ -4,7 +4,7 @@
 //! with the SHA-256 pinned for it in legacy-releases.txt (a rollback). Anything else is refused
 //! with a message saying why.
 
-use crate::backend::{LAUNCHER_REPO, REPO};
+use crate::backend::REPO;
 use horizon_release_sign::{PublicKey, SIGNATURE, SIGNATURE_V2, SUMS};
 
 /// Where a release's attached file downloads from (GitHub's fixed address for it).
@@ -12,7 +12,8 @@ pub fn asset_url(tag: &str, name: &str) -> String {
     asset_url_in(REPO, tag, name)
 }
 
-/// The same, in `repo`: a launcher release installs from [`LAUNCHER_REPO`]'s releases, the game's
+/// The same, in `repo`: a launcher release installs from [`crate::backend::LAUNCHER_REPO`]'s
+/// releases, the game's
 /// from [`REPO`]'s.
 pub fn asset_url_in(repo: &str, tag: &str, name: &str) -> String {
     format!("https://github.com/{repo}/releases/download/{tag}/{name}")
