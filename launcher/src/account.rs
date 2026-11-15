@@ -28,10 +28,10 @@
 //! and `HORIZON_ELYBY_REDIRECT_URI`.
 pub mod session;
 
-mod elyby;
+pub(crate) mod elyby;
 pub mod offline;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
@@ -1150,7 +1150,7 @@ impl FileStore {
 
     /// `json` sealed for the file ([`SEALED`]), under [`file_key`] with this install's secret.
     fn seal(&self, json: &[u8]) -> Result<Vec<u8>, String> {
-        use chacha20poly1305::{aead::Aead, KeyInit};
+        use chacha20poly1305::{KeyInit, aead::Aead};
         let key = file_key(&self.install_secret(true)?.expect("made"));
         let mut nonce = [0u8; 12];
         getrandom::fill(&mut nonce).map_err(|e| e.to_string())?;
@@ -1164,7 +1164,7 @@ impl FileStore {
     /// again; `None` for a file in another format, changed, sealed on another computer or by
     /// another install, or whose install secret is gone.
     fn unseal(&self, bytes: &[u8]) -> Result<Option<(Vec<u8>, bool)>, String> {
-        use chacha20poly1305::{aead::Aead, KeyInit};
+        use chacha20poly1305::{KeyInit, aead::Aead};
         let (key, old, rest) = if let Some(rest) = bytes.strip_prefix(SEALED) {
             let Some(secret) = self.install_secret(false)? else {
                 return Ok(None);
@@ -2305,14 +2305,16 @@ fn write_launch_session_file(
         // as it ends starts the next).
         let _ = std::thread::Builder::new()
             .name("Session files".into())
-            .spawn(|| loop {
-                std::thread::sleep(Duration::from_secs(5));
-                let Ok(mut unread) = UNREAD.lock() else {
-                    return;
-                };
-                reap(&mut unread, SESSION_FILE_LIFE);
-                if unread.is_empty() {
-                    return;
+            .spawn(|| {
+                loop {
+                    std::thread::sleep(Duration::from_secs(5));
+                    let Ok(mut unread) = UNREAD.lock() else {
+                        return;
+                    };
+                    reap(&mut unread, SESSION_FILE_LIFE);
+                    if unread.is_empty() {
+                        return;
+                    }
                 }
             });
     }
@@ -2637,6 +2639,37 @@ fn launch_as(
     pass
 }
 
+fn cache_skin_file(game_home: &Path, uuid: &str, url: &str) -> Option<PathBuf> {
+    let local = Path::new(url);
+    if local.is_file() {
+        return Some(local.to_path_buf());
+    }
+    let skins_dir = game_home.join("skins");
+    let _ = std::fs::create_dir_all(&skins_dir);
+    use sha1::{Digest, Sha1};
+    let hash = format!("{:x}", Sha1::digest(url.as_bytes()));
+    let target = skins_dir.join(format!("{uuid}-{hash}.png"));
+    if !target.is_file() {
+        let response = ureq::AgentBuilder::new()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .get(url)
+            .call()
+            .ok()?;
+        use std::io::Read;
+        let mut bytes = Vec::new();
+        response
+            .into_reader()
+            .take(1024 * 1024)
+            .read_to_end(&mut bytes)
+            .ok()?;
+        if !bytes.is_empty() {
+            let _ = std::fs::write(&target, &bytes);
+        }
+    }
+    target.is_file().then_some(target)
+}
+
 /// The game's session files for a launch that passed the gate.
 fn session_file(
     game_home: &Path,
@@ -2660,6 +2693,27 @@ fn session_file(
         name,
         ..GameSession::default()
     };
+    let playing_account = pass
+        .session
+        .as_ref()
+        .map(|(a, _)| a)
+        .or_else(|| pass.owner.as_ref().map(|(a, _)| a));
+    if let Some(acc) = playing_account {
+        if let Some((skin_url, model)) = &acc.skin {
+            if let Some(path) = cache_skin_file(game_home, &acc.uuid, skin_url) {
+                out.env
+                    .push(("HORIZON_OFFLINE_SKIN", path.to_string_lossy().into_owned()));
+                out.env.push(("HORIZON_OFFLINE_SKIN_MODEL", model.clone()));
+            }
+        }
+        if let Some(cape_url) = &acc.cape {
+            if let Some(path) = cache_skin_file(game_home, &format!("{}-cape", acc.uuid), cape_url)
+            {
+                out.env
+                    .push(("HORIZON_OFFLINE_CAPE", path.to_string_lossy().into_owned()));
+            }
+        }
+    }
     if let Some((account, secrets)) = pass.session {
         match write_launch_session_file(&game_home.join("sessions"), &account, &secrets) {
             Ok(file) => out.file = Some(file),

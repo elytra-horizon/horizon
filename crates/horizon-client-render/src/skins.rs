@@ -52,6 +52,8 @@ pub fn texture_uris() -> &'static [String] {
         // — so every viewer accepts those texture URLs, whatever they signed in as.
         uris.push("http://ely.by/{textureId}".into());
         uris.push("https://ely.by/{textureId}".into());
+        uris.push("http://skinsystem.ely.by/{textureId}".into());
+        uris.push("https://skinsystem.ely.by/{textureId}".into());
         uris
     })
 }
