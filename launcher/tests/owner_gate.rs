@@ -4,7 +4,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
-const REFUSED: &str = "No account here can play Minecraft: add an ely.by account or an offline name.";
+const REFUSED: &str =
+    "No account here can play Minecraft: add an ely.by account or an offline name.";
 
 /// Fresh homes with one installed (not prepared) version and an offline name from an older
 /// launcher, as a player who played offline before the gate has.
