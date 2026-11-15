@@ -2561,6 +2561,8 @@ pub struct GameSession {
     pub offline: Option<String>,
     /// The other accounts' sessions, for splitscreen players (`account_sessions`).
     pub env: Vec<(&'static str, String)>,
+    /// The playing account's name (`--name`).
+    pub name: Option<String>,
 }
 
 /// The owner gate for the game about to start, then the selected account's session in a file
@@ -2578,10 +2580,11 @@ pub fn session_for_game(game_home: &Path) -> Result<GameSession, NoOwner> {
         &mut accounts,
         pass.session.as_ref().map(|(a, _)| a.uuid.as_str()),
     );
+    let name = accounts.selected().map(|a| a.name.clone());
     if let Err(e) = accounts.save_renewed() {
         eprintln!("Horizon: the accounts are not saved: {e}");
     }
-    Ok(session_file(game_home, pass, env))
+    Ok(session_file(game_home, pass, env, name))
 }
 
 /// [`session_for_game`] for one launch as `who` (`play --account`, a signed-in account): who
@@ -2606,10 +2609,16 @@ pub fn session_for_game_as(game_home: &Path, who: &str) -> Result<GameSession, S
         &mut accounts,
         pass.session.as_ref().map(|(a, _)| a.uuid.as_str()),
     );
+    let name = accounts
+        .accounts
+        .iter()
+        .find(|a| a.uuid == who || a.name == who)
+        .map(|a| a.name.clone())
+        .or_else(|| accounts.selected().map(|a| a.name.clone()));
     if let Err(e) = accounts.save_renewed() {
         eprintln!("Horizon: the accounts are not saved: {e}");
     }
-    Ok(session_file(game_home, pass, env))
+    Ok(session_file(game_home, pass, env, name))
 }
 
 /// The owner gate as `who`, on `accounts`, which keeps its choice of player.
@@ -2629,10 +2638,26 @@ fn launch_as(
 }
 
 /// The game's session files for a launch that passed the gate.
-fn session_file(game_home: &Path, pass: Launch, env: Vec<(&'static str, String)>) -> GameSession {
+fn session_file(
+    game_home: &Path,
+    pass: Launch,
+    env: Vec<(&'static str, String)>,
+    name: Option<String>,
+) -> GameSession {
+    let name = name
+        .or_else(|| pass.session.as_ref().map(|(a, _)| a.name.clone()))
+        .or_else(|| pass.owner.as_ref().map(|(a, _)| a.name.clone()));
+    if let Some(player_name) = &name {
+        let _ = std::fs::create_dir_all(game_home);
+        let _ = std::fs::write(
+            game_home.join("horizon-player.txt"),
+            format!("name:{player_name}\n"),
+        );
+    }
     let mut out = GameSession {
         env,
         offline: pass.offline,
+        name,
         ..GameSession::default()
     };
     if let Some((account, secrets)) = pass.session {

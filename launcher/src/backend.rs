@@ -3218,6 +3218,9 @@ pub fn client_as(tag: &str, who: Option<&str>) -> Result<Command, String> {
     if let Some(file) = session.file {
         cmd.arg("--session-file").arg(file);
     }
+    if let Some(name) = session.name {
+        cmd.arg("--name").arg(name);
+    }
     cmd.envs(session.env);
     if let Some(e) = session.offline {
         eprintln!("Playing offline: {e}");

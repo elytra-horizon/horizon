@@ -1240,7 +1240,12 @@ impl Launcher {
                     self.load_auth_statuses(false);
                     if let Some(tag) = self.starting_client.take() {
                         let mut cmd = backend::client_command(&tag);
-                        let account::GameSession { file, offline, env } = match session {
+                        let account::GameSession {
+                            file,
+                            offline,
+                            env,
+                            name,
+                        } = match session {
                             Ok(pass) => pass,
                             Err(refused) => {
                                 // A keyring that didn't answer isn't a missing owner (#12179).
@@ -1258,6 +1263,9 @@ impl Launcher {
                         self.owner = Some(true);
                         if let Some(file) = file {
                             cmd.arg("--session-file").arg(file);
+                        }
+                        if let Some(name) = name {
+                            cmd.arg("--name").arg(name);
                         }
                         cmd.envs(env);
                         // Still play, offline, and say why.
