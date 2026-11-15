@@ -1204,6 +1204,8 @@
   "In the last build, on {horizon}": "Dans la dernière compilation, sur {horizon}",
   "Duplicate native mod {id}.": "Duplicate native mod {id}.",
   "Native and content mod ids differ.": "Native and content mod ids differ.",
+  "The server gets a copy: your single-player world stays as it is.": "Le serveur en reçoit une copie, votre monde solo reste tel quel.",
+  "You have no single-player world yet: play one first, or choose New world.": "Vous n'avez pas encore de monde solo : créez-en un ou sélectionnez Nouveau Monde",
   "A name, and the skin of a player who has it. Offline-mode servers only: no account, no password.": "A name, and the skin of a player who has it. Offline-mode servers only: no account, no password.",
   "Add an account": "Add an account",
   "Add an ely.by account.": "Ajoutez un compte ely.by.",
