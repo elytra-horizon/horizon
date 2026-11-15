@@ -28,7 +28,7 @@ esac
 [[ "$(lipo -archs "$binary")" == "$cpu" ]] || { echo "$binary is $(lipo -archs "$binary"), not $cpu" >&2; exit 1; }
 zip=horizon-launcher-macos-$arch.zip
 dmg=$out/horizon-launcher-macos-$arch.dmg
-app=$out/Elytra Horizon.app
+app="$out/Elytra Horizon.app"
 
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
