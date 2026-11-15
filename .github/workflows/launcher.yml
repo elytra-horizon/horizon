@@ -309,6 +309,8 @@ jobs:
               # player downloads and double-clicks, and it replaces itself instead
               # (packaging/linux/appimage.sh, launcher/src/backend.rs).
               ../packaging/linux/appimage.sh "$BIN/${{ matrix.binary }}" "$version" out
+              ../packaging/linux/deb.sh "$BIN/${{ matrix.binary }}" "$version" out
+              ../packaging/linux/arch.sh "$BIN/${{ matrix.binary }}" "$version" out
             fi
             mkdir -p dist
             cp "$BIN/${{ matrix.binary }}" dist/
@@ -359,7 +361,10 @@ jobs:
           RELEASE_SIGNING_KEY_NEXT: ${{ secrets.RELEASE_SIGNING_KEY_NEXT }}
           EPHEMERAL: ${{ needs.decide.outputs.dry_run == 'true' && 'yes' || '' }}
           TAG: ${{ needs.decide.outputs.tag }}
-        run: bash tools/ci/sign_release.sh "$TAG" dist/horizon-launcher-*
+        run: |
+          shopt -s nullglob
+          files=(dist/horizon-launcher-* dist/elytra-horizon*)
+          bash tools/ci/sign_release.sh "$TAG" "${files[@]}"
       - uses: actions/upload-artifact@v7
         with:
           name: signature
@@ -415,9 +420,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.decide.outputs.tag }}
         run: |
+          shopt -s nullglob
+          files=(dist/horizon-launcher-* dist/elytra-horizon*)
           signature=(); [[ -f dist/SHA256SUMS.sig ]] && signature=(dist/SHA256SUMS.sig)
           gh release create "$TAG" --target "${{ needs.decide.outputs.head }}" --title "$(cat notes/title.txt)" \
-            --notes-file notes/body.md --latest=false dist/horizon-launcher-* dist/SHA256SUMS "${signature[@]}"
+            --notes-file notes/body.md --latest=false "${files[@]}" dist/SHA256SUMS "${signature[@]}"
       - name: Dry run, the release that would be published
         if: needs.decide.outputs.dry_run == 'true'
         run: |
