@@ -166,7 +166,7 @@ pub struct Manifest {
     /// 0.2: the motion guide the post stage's `motion_at` reads, if the pack asks for it;
     /// needs `[[post]]`.
     pub motion: Option<Motion>,
-    /// 0.2: kept resources. Checked, not yet run.
+    /// 0.2: kept resources and compute passes. Checked, not yet run.
     pub kept: crate::kept::Kept,
 }
 
@@ -450,6 +450,21 @@ pub struct Stage {
     /// chain's last picture.
     #[serde(default)]
     pub output: Option<String>,
+    /// 0.2, a `[[post]]` entry only: a compute dispatch in the chain, not a pass that draws.
+    #[serde(default)]
+    pub compute: bool,
+    /// 0.2, a compute pass only (`compute = true`, `[[before_world]]`): its invocations.
+    #[serde(default)]
+    pub dispatch: Option<crate::kept::Dispatch>,
+    /// 0.2, a compute pass only: its workgroup's size.
+    #[serde(default)]
+    pub workgroup: Option<[u32; 3]>,
+    /// 0.2: the `[[resource]]` names the pass reads, `x` this frame's, `x_previous` last frame's.
+    #[serde(default)]
+    pub reads: Vec<String>,
+    /// 0.2, a compute pass only: the `[[resource]]` names it writes.
+    #[serde(default)]
+    pub writes: Vec<String>,
 }
 
 /// The scales a post pass may draw at.
@@ -567,6 +582,8 @@ struct Raw {
     kept: Option<crate::kept::RawKept>,
     #[serde(default)]
     resource: Vec<crate::kept::RawResource>,
+    #[serde(default)]
+    before_world: Vec<Stage>,
 }
 
 #[derive(Deserialize)]
@@ -742,6 +759,8 @@ impl Manifest {
                 ),
                 (raw.kept.is_some(), "[kept]"),
                 (!raw.resource.is_empty(), "[[resource]]"),
+                (!raw.before_world.is_empty(), "[[before_world]]"),
+                (raw.post.iter().any(|p| p.compute), "[[post]] compute"),
                 (
                     raw.options.iter().any(|o| o.resets.is_some()),
                     "an option's `resets`",
@@ -817,6 +836,7 @@ impl Manifest {
             .chain(&raw.post)
             .chain(&raw.tonemap)
             .chain(&raw.entity)
+            .chain(&raw.before_world)
             .any(|s| s.fog.is_some())
         {
             return Err(err("`fog` is a key of [material] only".into()));
@@ -840,17 +860,50 @@ impl Manifest {
             .chain(&raw.vertex)
             .chain(&raw.tonemap)
             .chain(&raw.entity)
+            .chain(&raw.before_world)
             .any(|s| s.scale.is_some() || s.output.is_some())
         {
             return Err(err("`scale` and `output` are keys of [[post]] only".into()));
+        }
+        // Compute keys: `[[post]]` and `[[before_world]]` only, which `kept::check` reads.
+        let computes = |s: &Stage| {
+            s.compute
+                || s.dispatch.is_some()
+                || s.workgroup.is_some()
+                || !s.reads.is_empty()
+                || !s.writes.is_empty()
+        };
+        if raw
+            .sky
+            .iter()
+            .chain(&raw.material)
+            .chain(&raw.vertex)
+            .chain(&raw.weather)
+            .chain(&raw.tonemap)
+            .chain(&raw.entity)
+            .any(computes)
+        {
+            return Err(err(
+                "`compute`, `dispatch`, `workgroup`, `reads` and `writes` are keys of [[post]] \
+                 and [[before_world]]"
+                    .into(),
+            ));
         }
         let resets = (raw.options.iter())
             .filter_map(|o| Some((o.id.clone(), o.resets.clone()?)))
             .collect();
         let traced = raw.ray_tracing.is_some();
         let moving = raw.motion.is_some();
-        let kept =
-            crate::kept::check(raw.kept, raw.resource, traced, moving, resets).map_err(err)?;
+        let kept = crate::kept::check(
+            raw.kept,
+            raw.resource,
+            raw.before_world,
+            &raw.post,
+            traced,
+            moving,
+            resets,
+        )
+        .map_err(err)?;
         check_post_targets(&raw.post, traced, moving, &kept.resources).map_err(err)?;
         if raw.ray_tracing.is_some() && raw.post.is_empty() && raw.material.is_none() {
             return Err(err(
@@ -863,10 +916,10 @@ impl Manifest {
                 "[motion] needs a [[post]] pass: the motion guide is the post stage's".into(),
             ));
         }
-        if raw.post.len() > MAX_POST_PASSES {
+        let passes = raw.post.iter().filter(|p| !p.compute).count();
+        if passes > MAX_POST_PASSES {
             return Err(err(format!(
-                "{} post passes; a pack may chain {MAX_POST_PASSES}",
-                raw.post.len()
+                "{passes} post passes; a pack may chain {MAX_POST_PASSES}"
             )));
         }
         let stages = raw
@@ -877,7 +930,8 @@ impl Manifest {
             .chain(&raw.weather)
             .chain(&raw.post)
             .chain(&raw.tonemap)
-            .chain(&raw.entity);
+            .chain(&raw.entity)
+            .chain(&kept.before_world);
         for file in raw
             .shared
             .iter()
@@ -894,6 +948,7 @@ impl Manifest {
             .chain(&raw.post)
             .chain(&raw.tonemap)
             .chain(&raw.entity)
+            .chain(&kept.before_world)
             .any(sky_only)
         {
             return Err(err(
@@ -1326,6 +1381,8 @@ impl Manifest {
     /// yet.
     pub fn computes(&self) -> bool {
         !self.kept.resources.is_empty()
+            || !self.kept.before_world.is_empty()
+            || self.post.iter().any(|p| p.compute)
     }
 
     /// Every WGSL file the manifest names, shared files first, each once.
@@ -1339,7 +1396,8 @@ impl Manifest {
             .chain(&self.weather)
             .chain(&self.post)
             .chain(&self.tonemap)
-            .chain(&self.entity);
+            .chain(&self.entity)
+            .chain(&self.kept.before_world);
         for file in self
             .shared
             .iter()
