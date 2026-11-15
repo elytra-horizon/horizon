@@ -3379,7 +3379,12 @@ fn launcher_update_from(releases: &[Release], own: &str) -> Option<Release> {
 pub fn releases_and_updates(
     on_releases: impl FnOnce(Result<Vec<Release>, String>),
 ) -> Result<Updates, String> {
-    releases_and_updates_with(release_list, installed, |_| launcher_releases(), on_releases)
+    releases_and_updates_with(
+        release_list,
+        installed,
+        |_| launcher_releases(),
+        on_releases,
+    )
 }
 
 fn releases_and_updates_with(
