@@ -2546,6 +2546,31 @@ def world_misc():
         cmd('/particle minecraft:flame 4 300 4 0 0 0 0 1 force @e[type=minecraft:pig]'),
         cmd('/particle minecraft:dust{color:[1.0,0.0,0.0],scale:1.0} 4 210 4 0 0 0 0 5 force @s'),
         cmd('/particle minecraft:block{block_state:"minecraft:stone"} 4 210 4 1 1 1 0.1 10 normal @a'),
+        # ParticleArgument decodes the options through the type's codec: a scale
+        # outside [0.01;4.0], a colour that is neither an int nor three floats and
+        # an item id the registry does not hold all fail before the particle is
+        # made; the success line names the type's registry key, not the typed text.
+        cmd('/particle flame 4 210 4'),
+        cmd('/particle minecraft:dust{color:0,scale:10} 4 210 4'),
+        cmd('/particle minecraft:dust{color:0,scale:0.01} 4 210 4'),
+        cmd('/particle minecraft:dust{color:"red",scale:1} 4 210 4'),
+        cmd('/particle minecraft:item{item:"minecraft:not_an_item"} 4 210 4'),
+        cmd('/particle minecraft:item{item:{}} 4 210 4'),
+        cmd('/particle minecraft:item{item:"minecraft:stone"} 4 210 4'),
+        cmd('/particle minecraft:item{item:{id:"minecraft:stone"}} 4 210 4'),
+        cmd('/particle minecraft:dust{color:[1,"a",2],scale:1} 4 210 4'),
+        cmd('/particle minecraft:dust{color:[1,2,3,4],scale:1} 4 210 4'),
+        cmd('/particle minecraft:dust{color:0} 4 210 4'),
+        cmd('/particle minecraft:dust{color:0,scale:"x"} 4 210 4'),
+        cmd('/particle minecraft:dust_color_transition{from_color:0,to_color:0,scale:10} 4 210 4'),
+        cmd('/particle minecraft:item{item:{id:"minecraft:air"}} 4 210 4'),
+        cmd('/particle minecraft:item 4 210 4'),
+        cmd('/particle minecraft:item{item:{id:"minecraft:stone",count:0}} 4 210 4'),
+        # Every field's error, joined last to first.
+        cmd('/particle minecraft:dust{color:"red",scale:10} 4 210 4'),
+        cmd('/particle minecraft:dust{color:"red"} 4 210 4'),
+        cmd('/particle minecraft:item{item:{id:"minecraft:not_an_item",count:0}} 4 210 4'),
+        cmd('/particle minecraft:item{item:{id:"minecraft:stone",count:"x"}} 4 210 4'),
         cmd('/playsound minecraft:block.note_block.harp master @s'),
         cmd('/playsound minecraft:block.note_block.harp record @s 4 210 4 1 2 0'),
         cmd('/playsound minecraft:block.note_block.harp master @a 1000 210 1000'),
@@ -7223,6 +7248,38 @@ def primed_tnt_fall():
     return ops
 
 
+def end_crystal_saved_motion():
+    """`Entity.load` reads `Motion` (a part over 10 loads as 0) and `Rotation` (`setXRot`: the pitch `% 360`
+    within +-90), and `saveWithoutId` writes them back. `EndCrystal.tick` never moves or turns the crystal, so both
+    keep what was loaded, after ticks and through a save and a reload of the chunk."""
+    x0, y0, z0 = 4096 - 160, 260, 3648
+    ring = [[(x0 >> 4) + i, (z0 >> 4) + k] for i in range(-2, 3) for k in range(-2, 3)]
+    ops = [cmd(f'/forceload add {x0} {z0}', False), {'op': 'wait_chunks', 'chunks': ring}]
+    subjects = ['Motion:[0.0d,0.4d,0.0d]', 'Motion:[12.0d,0.1d,-0.2d]', 'Rotation:[45.0f,10.0f]',
+                'Rotation:[400.0f,100.0f],Motion:[0.3d,0.0d,0.0d]', 'Rotation:[-30.0f,-450.0f]']
+    for n, fields in enumerate(subjects, 1):
+        ops.append(cmd(f'/summon end_crystal {x0 + 3 * n}.5 {y0} {z0 + 8}.5 {{UUID:[I;{TAG_CRYSTAL},0,{n},1],'
+                       f'ShowBottom:0b,{fields}}}', expect_result=1))
+
+    def reads():
+        for n in range(1, len(subjects) + 1):
+            for key in ('Motion', 'Rotation'):
+                ops.append(cmd(f'/data get entity {TAG_CRYSTAL:08x}-0000-0000-0000-{n:04x}00000001 {key}'))
+
+    reads()
+    ops.append({'op': 'tick', 'n': 2})
+    reads()
+    # The chunk saves and drops its entities, then loads them back.
+    ops += [cmd(f'/forceload remove {x0} {z0}', False), {'op': 'tick', 'n': 60},
+            {**cmd(f'/execute unless loaded {x0} {y0} {z0}', expect_result=1), 'guard': True},
+            cmd(f'/forceload add {x0} {z0}', False), {'op': 'wait_chunks', 'chunks': ring}]
+    reads()
+    return ops + setup(f'/kill @e[type=end_crystal,x={x0},y={y0 - 8},z={z0},dx=16,dy=32,dz=16]',
+                       f'/forceload remove {x0} {z0}')
+
+
+TAG_CRYSTAL = 15995  # UUIDs of end_crystal_saved_motion's crystals
+
 def end_crystal_saved_fall():
     """#14671: `Entity.load` reads `OnGround` (`getBooleanOr`) and `fall_distance`, and `saveWithoutId` writes them
     back; `EndCrystal.tick` never moves the crystal nor runs `baseTick`, so both keep what was loaded, through a save
@@ -8305,6 +8362,43 @@ def rocket_fall_distance():
                        f'/forceload remove {x0} {z0}')
 
 
+def falling_block_fall_on():
+    """A falling block lands through `Entity.checkFallDamage`: the block under it runs `Block.fallOn`,
+    whose `causeFallDamage` distance `FallingBlockEntity.causeFallDamage` hurts by. Anvils fall 10 blocks
+    onto stone, a bed (half the fall), hay (its multiplier changes nothing for a falling block), powder
+    snow (no causeFallDamage) and a stalagmite's tip (the fall plus 2.5), each through a husk standing
+    there (no sunburn); its health is read once they have landed.
+    """
+    x0, y0, z0 = 4928, 250, 4928
+    # Entities tick once every chunk within 2 columns is loaded (ChunkMap.prepareEntityTickingChunk).
+    chunk = [[(x0 >> 4) + dx, (z0 >> 4) + dz] for dx in range(-2, 3) for dz in range(-2, 3)]
+    ops = [cmd(f'/forceload add {x0} {z0}', False), {'op': 'wait_chunks', 'chunks': chunk},
+           cmd('/tick freeze', False),
+           cmd(f'/fill {x0} {y0 - 1} {z0} {x0 + 15} {y0 - 1} {z0 + 15} stone', expect_result=256)]
+    cases = [('stone', None), ('bed', 'red_bed[part=foot,facing=south]'), ('hay', 'hay_block'),
+             ('snow', 'powder_snow'), ('tip', 'pointed_dripstone[vertical_direction=up,thickness=tip]')]
+    for n, (name, block) in enumerate(cases, 1):
+        x = x0 + 1 + (n - 1) * 3
+        top = y0
+        if block:
+            ops.append(cmd(f'/setblock {x} {y0} {z0 + 8} {block}', expect_result=1))
+            top = y0 + 1
+        # Leather boots keep the husk on powder snow; it stands still and lives through the blow.
+        ops.append(cmd(f'/summon husk {x}.5 {top} {z0 + 8}.5 {{UUID:[I;19000,0,{n},1],NoAI:1b,Silent:1b,'
+                       'PersistenceRequired:1b,attributes:[{id:"minecraft:max_health",base:100d}],Health:100f,'
+                       'equipment:{feet:{id:"minecraft:leather_boots",count:1}}}', expect_result=1))
+        ops.append(cmd(f'/summon falling_block {x}.5 {y0 + 10} {z0 + 8}.5 {{BlockState:{{id:"minecraft:anvil"}},'
+                       'Time:1,HurtEntities:1b,FallHurtAmount:2f,FallHurtMax:40}', expect_result=1))
+    ops.append(cmd('/tick unfreeze', False))
+    ops.append({'op': 'tick', 'n': 40})
+    ops.append(cmd('/tick freeze', False))
+    for n, _ in enumerate(cases, 1):
+        ops.append(cmd(f'/data get entity 00004a38-0000-0000-0000-{n:04x}00000001 Health'))
+    return ops + setup('/tick unfreeze', f'/kill @e[x={x0},y={y0 - 8},z={z0},dx=16,dy=48,dz=16,type=!player]',
+                       f'/fill {x0} {y0 - 1} {z0} {x0 + 15} {y0 + 20} {z0 + 15} air',
+                       f'/forceload remove {x0} {z0}')
+
+
 
 def boat_float_height():
     """#13022: `AbstractBoat.checkInWater` and `isUnderwater` sum a block's y and its water height
@@ -8651,6 +8745,7 @@ def groups():
         ('primed tnt box', primed_tnt_box()),
         ('primed tnt fall', primed_tnt_fall()),
         ('end crystal saved fall', end_crystal_saved_fall()),
+        ('end crystal saved motion', end_crystal_saved_motion()),
         ('dispensed item escape', dispensed_item_escape()),
         ('command block last output', command_block_last_output()),
         ('explosion player experience', explosion_player_experience()),
@@ -8777,6 +8872,7 @@ def groups():
         ('rocket data merge', rocket_data_merge()),
         ('mob fall clip', mob_fall_clip()),
         ('armadillo scute time', armadillo_scute_time()),
+        ('falling block fall on', falling_block_fall_on()),
         ('orb fall distance', orb_fall_distance()),
         ('rocket fall distance', rocket_fall_distance()),
         ('vehicle ground and fall', vehicle_ground_and_fall()),
