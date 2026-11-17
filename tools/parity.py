@@ -414,7 +414,7 @@ def impl_targets(header, text, workspace):
 def narrow_rust_sources(sources, scope):
     """Drop the workspace Rust sources a harness's declared PARITY_RUST_SCOPE proves it can't reach.
 
-    The scope lists source prefixes (crates/horizon-world/src/nbt.rs,
+    The scope lists source prefixes (crates/horizon-core/src/nbt.rs,
     crates/horizon-world/src/datafix/). It applies only if it is closed: no
     file in it names a module, crate item or macro outside it (crate::,
     super::, other workspace crates), declares a module it doesn't cover, or
@@ -1390,13 +1390,17 @@ def git_show(base, path):
     return result.stdout if result.returncode == 0 else None
 
 
+# A TOML line up to its comment: a "#" inside a basic ("...", with escapes) or literal ('...') string is kept.
+MANIFEST_COMMENT = re.compile(r'''^((?:[^#"']|"(?:[^"\\]|\\.)*"|'[^']*')*).*$''')
+
+
 def manifest_lines(text):
     """A Cargo.toml's lines that decide what is built: (section, line) pairs, without its package's identity and
     targets, comments, or workspace crates (whose code counts through its own sources)."""
     lines, section = set(), ""
     name = re.search(r'^\[package\][^\[]*?^name\s*=\s*"([^"]+)"', text or "", re.M | re.S)
     for raw in (text or "").splitlines():
-        line = re.sub(r"\s+", " ", raw.split("#", 1)[0]).strip()
+        line = re.sub(r"\s+", " ", MANIFEST_COMMENT.sub(r"\1", raw) if "#" in raw else raw).strip()
         if not line:
             continue
         if line.startswith("["):
@@ -1643,6 +1647,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("names", nargs="*", help="harness names, e.g. food or block_update")
     parser.add_argument("--all", action="store_true", help="run every harness from scratch, ignoring earlier passes")
+    parser.add_argument("--exclude", action="append", default=[], help="exclude a harness and its shards")
     parser.add_argument("--fresh", action="store_true", help="run the vanilla oracles even if their inputs are unchanged")
     parser.add_argument("--failed", action="store_true", help="rerun the harnesses that failed last time")
     parser.add_argument("--list", action="store_true", help="print what would run, then stop")
@@ -1697,7 +1702,11 @@ def main():
         chosen = [name for name in found if records.get(name, {}).get("status") == "fail"]
     elif args.changed or args.changed_files:
         if args.changed_files:
-            changed, since = set(Path(args.changed_files).read_text(encoding="utf-8").split("\n")) - {""}, ""
+            try:
+                text = Path(args.changed_files).read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as error:
+                parser.error(f"cannot read changed-files path {args.changed_files}: {error}")
+            changed, since = set(text.split("\n")) - {""}, ""
         else:
             changed, since = changed_files(args.changed), f" since the merge base with {args.changed}"
         if changed is None:
@@ -1716,6 +1725,7 @@ def main():
               f"depend on them, {len(chosen)} without a pass for their current inputs.", flush=True)
     else:
         chosen = [name for name in found if stale(name, state, hasher, environment)]
+    chosen = [name for name in chosen if base_name(name) not in args.exclude]
     skips = platform_skips(host_config())
     for name in [name for name in chosen if base_name(name) in skips and not args.names]:
         print(f"skipped on {HOST} ({sys.platform}): {name}: {skips[base_name(name)]}", flush=True)
@@ -1726,7 +1736,8 @@ def main():
         chosen.remove(name)
     rounds = {name: args.repeat for name in chosen} if args.repeat > 1 else {}
     if args.flake_check:
-        changed = {name for name in changed_harnesses(found, records, args.flake_check) if base_name(name) not in manual}
+        changed = {name for name in changed_harnesses(found, records, args.flake_check)
+                   if base_name(name) not in manual and base_name(name) not in args.exclude}
         for name in sorted(changed):
             # A pass counts for a changed harness only if it held over enough runs.
             if name not in chosen and records.get(name, {}).get("rounds", 1) < args.flake_rounds:

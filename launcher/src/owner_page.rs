@@ -7,12 +7,17 @@ impl Launcher {
     /// Whether the screen covers the window: no account can play, and either Play was refused or
     /// the player hasn't read it yet. The data question comes first.
     pub(crate) fn asking_owner(&self) -> bool {
-        self.owner == Some(false)
+        !horizon_launcher::developer_offline::selected()
+            && self.owner == Some(false)
             && (self.owner_screen_open || !self.settings.owner_notice_seen)
             && !self.asking_consent()
             && self.opening.is_none()
     }
 
+    /// Opens the screen; clicking it directs the user to add an account in Settings.
+    pub(crate) fn sign_in_to_play(&mut self) {
+        self.owner_screen_open = true;
+    }
     /// Closes it; it comes back with the next refused Play.
     fn close_owner_screen(&mut self) {
         self.cancel_sign_in();
