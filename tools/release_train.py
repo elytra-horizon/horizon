@@ -111,7 +111,24 @@ def run(*command, check=True):
 
 
 def gh_json(*arguments):
-    return json.loads(run("gh", *arguments) or "null")
+    try:
+        return json.loads(run("gh", *arguments) or "null")
+    except SystemExit as exc:
+        if "--slurp" in arguments and "unknown flag: --slurp" in str(exc):
+            no_slurp = [a for a in arguments if a != "--slurp"]
+            out = run("gh", *no_slurp)
+            decoder = json.JSONDecoder()
+            pos = 0
+            items = []
+            while pos < len(out):
+                sub = out[pos:].strip()
+                if not sub:
+                    break
+                obj, idx = decoder.raw_decode(sub)
+                items.append(obj)
+                pos += (len(out[pos:]) - len(sub)) + idx
+            return items
+        raise
 
 
 def exporters():
