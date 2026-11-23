@@ -60,7 +60,7 @@ fn the_cli_refuses_to_play_without_an_owner() {
 }
 
 #[test]
-fn prepare_download_explains_the_sign_in_requirement() {
+fn prepare_download_explains_the_other_source() {
     let root = home("prepare-download");
     std::fs::copy(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../research-lock.json"),
@@ -82,7 +82,7 @@ fn prepare_download_explains_the_sign_in_requirement() {
     assert!(out.stdout.is_empty(), "{}", text(&out));
     assert_eq!(
         String::from_utf8_lossy(&out.stderr).trim(),
-        "error: Sign in with a Microsoft account that owns Minecraft: Java Edition to download 26.3 from Mojang."
+        "error: Or choose your own Minecraft install on the Play page: Horizon prepares 26.3 from it."
     );
     assert!(!root.join("launcher/minecraft").exists());
     let _ = std::fs::remove_dir_all(&root);
