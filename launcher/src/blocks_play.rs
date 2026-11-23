@@ -195,12 +195,13 @@ impl Launcher {
                         cx.notify();
                     })),
                 ),
-            Some(false) => div().child(microsoft::sign_in_button("prepare-sign-in", &t).on_click(
-                cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.sign_in_to_play();
-                    cx.notify();
-                }),
-            )),
+            Some(false) => div().child(
+                button("prepare-add-account", "Add account in Settings", Kind::Secondary, &t)
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.go(Page::Settings);
+                        cx.notify();
+                    })),
+            ),
             None => div().child(prepare),
         };
         let owner = self.owner == Some(true);
@@ -270,22 +271,22 @@ impl Launcher {
             )),
         };
         // The top bar shows who plays; a row only when there is something to do about it: no
-        // account that owns the game (Play needs one), or offline. The glass look's top bar has
-        // Sign in with Microsoft and says Offline itself.
+        // account that can play (Play needs one), or offline. The glass look's top bar says
+        // who plays itself.
         if !t.glass {
             if self.owner == Some(false) {
                 rows = rows.child(index_row(
                     5,
-                    tr("Microsoft account"),
+                    tr("Account"),
                     Some(
                         div()
                             .child(format!("{}.", tr(account::NEEDS_OWNER)))
                             .into_any_element(),
                     ),
                     Some(
-                        microsoft::sign_in_button("gate-sign-in", &t)
+                        button("gate-accounts", "Open Settings", Kind::Secondary, &t)
                             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                this.sign_in_to_play();
+                                this.go(Page::Settings);
                                 cx.notify();
                             }))
                             .into_any_element(),

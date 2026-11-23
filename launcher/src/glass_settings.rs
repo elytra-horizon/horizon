@@ -51,8 +51,9 @@ const INDEX: [&[&str]; 10] = [
         "Light",
     ],
     &[
-        "Microsoft account",
-        "Sign in with Microsoft",
+        "ely.by account",
+        "Sign in with ely.by",
+        "Offline account",
         "Sign out",
         "Play as",
         "Skin",

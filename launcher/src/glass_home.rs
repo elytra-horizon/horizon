@@ -705,8 +705,8 @@ impl Launcher {
                             cx.notify();
                         }))
                     }
-                    // No account here owns the game: the button says "Sign in to play", so a
-                    // press signs in, as the top bar's Sign in with Microsoft does.
+                    // No account here can play: the button says "Sign in to play", so a press
+                    // opens the account gate, which points at Settings.
                     (None, PlayPress::Nothing) if owner == Some(false) => {
                         main.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                             this.picker.open = false;

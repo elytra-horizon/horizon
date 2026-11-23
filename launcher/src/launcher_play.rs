@@ -624,19 +624,14 @@ impl Launcher {
         });
     }
 
-    /// Generic Add account and targeted re-sign-in share the launcher-owned device-code flow.
-    pub(crate) fn start_sign_in(&mut self) {
-        self.begin_sign_in(None);
-    }
-
+    /// Signs an ely.by account in again. Microsoft accounts already signed in have no sign-in
+    /// path in this fork: their row offers Refresh and Sign out.
     pub(crate) fn re_sign_in(&mut self, uuid: &str) {
         let Some(account) = self.accounts.find(uuid).cloned() else {
             return;
         };
         if account::provider_of(account::store(), &account.uuid) == Some(account::Provider::ElyBy) {
             self.begin_elyby_sign_in(Some(account));
-        } else {
-            self.begin_sign_in(Some(account));
         }
     }
 
@@ -669,20 +664,6 @@ impl Launcher {
         }
         self.sign_in = Some(SignIn::start_offline(&name));
         self.sign_in_target = None;
-        self.sign_in_state = Some(SignInState::Starting);
-    }
-
-    pub(crate) fn begin_sign_in(&mut self, target: Option<account::Account>) {
-        self.cancel_sign_in();
-        // The code page offers a private window: find the default browser meanwhile.
-        std::thread::spawn(|| {
-            horizon_launcher::private_window::detected();
-        });
-        self.sign_in = Some(match &target {
-            Some(account) => SignIn::start_for(account.clone()),
-            None => SignIn::start(),
-        });
-        self.sign_in_target = target;
         self.sign_in_state = Some(SignInState::Starting);
     }
 

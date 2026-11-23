@@ -5020,8 +5020,8 @@ mod tests {
              MultiMC, the Modrinth App, ATLauncher, GDLauncher or Dawn Client, then prepare again.\
              \n  • Or choose the folder where your launcher keeps Minecraft 26.3 (Minecraft \
              folder › Choose… in the launcher, --minecraft on the command line).\
-             \n  • Sign in with a Microsoft account that owns Minecraft: Java Edition to download \
-             26.3 from Mojang."
+             \n  • Or choose your own Minecraft install on the Play page: Horizon prepares 26.3 \
+             from it."
         );
         let no_owner = || Ok(account::Launch::default());
         for (pass, signed_in) in [

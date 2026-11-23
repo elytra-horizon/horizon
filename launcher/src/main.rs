@@ -61,7 +61,6 @@ mod line_edit;
 mod location_page;
 mod markdown;
 mod mcp;
-mod microsoft;
 mod mod_icons;
 mod modpacks_page;
 mod mods_page;
