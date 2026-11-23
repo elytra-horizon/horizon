@@ -40,8 +40,8 @@ pub fn trusted_keys() -> Vec<PublicKey> {
     trusted_keys_for("horizon-rust/horizon")
 }
 
-/// Repository-scoped release trust: `release-keys.txt` for horizon-rust/horizon. Any other repository has no
-/// trusted keys, so its downloads fail closed.
+/// Repository-scoped release trust: `release-keys.txt` for upstream and this fork, which share the
+/// fork's release key. Any other repository has no trusted keys, so its downloads fail closed.
 pub fn trusted_keys_for(repository: &str) -> Vec<PublicKey> {
     parse_keys(repository_keys(repository, KEYS)).unwrap_or_default()
 }
@@ -91,7 +91,7 @@ fn extra_sdk_keys() -> Vec<PublicKey> {
 
 fn repository_keys<'a>(repository: &str, keys: &'a str) -> &'a str {
     match repository {
-        "horizon-rust/horizon" => keys,
+        "horizon-rust/horizon" | "elytra-horizon/horizon" => keys,
         _ => "",
     }
 }

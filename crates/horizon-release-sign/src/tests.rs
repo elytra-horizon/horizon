@@ -41,6 +41,11 @@ fn repository_trust_is_isolated_and_unknown_repositories_fail_closed() {
         trusted_keys_for("horizon-rust/horizon"),
         parse_keys(KEYS).unwrap()
     );
+    // The fork's game and launcher releases are signed with the same key set.
+    assert_eq!(
+        trusted_keys_for("elytra-horizon/horizon"),
+        parse_keys(KEYS).unwrap()
+    );
 }
 
 /// Runs in both profiles (CI runs it with `--release` too): the variable's key is trusted for an SDK

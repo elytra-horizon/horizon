@@ -476,10 +476,22 @@ pub(super) enum ServicesKeys {
     /// `canValidateProfileKeys()` is false: none could be had.
     Missing,
 }
-/// The signed-in account's `/minecraft/profile` fetch after joining.
+/// The signed-in account's profile fetch after joining. ely.by's answer is fetched from its
+/// session server at join, so a slow or failed request must not leave the player without their
+/// own skin for the rest of the session: try again a few times before settling for no skin.
+const OWN_PROFILE_ATTEMPTS: u8 = 3;
+const OWN_PROFILE_RETRY: Duration = Duration::from_secs(2);
+
 enum OwnProfile {
     Idle,
-    Fetching(std::sync::mpsc::Receiver<Option<horizon_client::skins::Textures>>),
+    Fetching {
+        recv: std::sync::mpsc::Receiver<Option<horizon_client::skins::Textures>>,
+        attempts: u8,
+    },
+    Retrying {
+        at: Instant,
+        attempts: u8,
+    },
     Done(Option<horizon_client::skins::Textures>),
 }
 

@@ -1,6 +1,7 @@
 //! The tab list's players, their profiles and skins.
 
 use super::*;
+use std::time::Instant;
 
 impl Game<'_> {
     /// The player list's view of the connection: the listed players (with
@@ -121,24 +122,46 @@ impl Game<'_> {
         let Some(r) = self.remote.as_mut() else {
             return;
         };
-        match &mut r.own_profile {
+        let state = &mut r.own_profile;
+        let fetch = |attempts: u8| {
+            let Some(auth) = auth.clone() else {
+                return Some(OwnProfile::Done(None));
+            };
+            let (send, recv) = std::sync::mpsc::channel();
+            std::thread::Builder::new()
+                .name("Own profile".into())
+                .spawn(move || {
+                    let _ = send.send(horizon_client::auth::own_textures(auth.as_ref()));
+                })
+                .ok();
+            Some(OwnProfile::Fetching { recv, attempts })
+        };
+        match state {
             OwnProfile::Idle => {
-                let Some(auth) = auth else {
-                    r.own_profile = OwnProfile::Done(None);
-                    return;
-                };
-                let (send, recv) = std::sync::mpsc::channel();
-                std::thread::Builder::new()
-                    .name("Own profile".into())
-                    .spawn(move || {
-                        let _ = send.send(horizon_client::auth::own_textures(auth.as_ref()));
-                    })
-                    .ok();
-                r.own_profile = OwnProfile::Fetching(recv);
+                if let Some(next) = fetch(1) {
+                    *state = next;
+                }
             }
-            OwnProfile::Fetching(recv) => {
-                if let Ok(own) = recv.try_recv() {
-                    r.own_profile = OwnProfile::Done(own);
+            OwnProfile::Fetching { recv, attempts } => match recv.try_recv() {
+                Ok(Some(own)) => *state = OwnProfile::Done(Some(own)),
+                Ok(None) | Err(std::sync::mpsc::TryRecvError::Disconnected)
+                    if *attempts < OWN_PROFILE_ATTEMPTS =>
+                {
+                    *state = OwnProfile::Retrying {
+                        at: Instant::now() + OWN_PROFILE_RETRY,
+                        attempts: *attempts + 1,
+                    };
+                }
+                Ok(None) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    *state = OwnProfile::Done(None)
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            },
+            OwnProfile::Retrying { at, attempts } => {
+                if Instant::now() >= *at {
+                    if let Some(next) = fetch(*attempts) {
+                        *state = next;
+                    }
                 }
             }
             OwnProfile::Done(_) => {}

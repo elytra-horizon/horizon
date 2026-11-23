@@ -10,11 +10,12 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
-/// Authority for game, launcher and native SDK release reads on this fork.
-pub const REPO: &str = "horizon-rust/horizon";
-/// Where this fork's launcher updates come from: its own releases carry the ely.by and offline
-/// accounts, which upstream's launcher releases do not. The game still installs from [`REPO`]'s.
-pub const LAUNCHER_REPO: &str = "elytra-horizon/horizon";
+/// Authority for game, launcher and native SDK release reads on this fork. Game and launcher
+/// builds come from this repository: upstream's game has no ely.by account or offline-name
+/// support, so installing it would lose the player's own skin and session on those accounts.
+pub const REPO: &str = "elytra-horizon/horizon";
+/// Launcher updates come from the same fork releases as the game.
+pub const LAUNCHER_REPO: &str = REPO;
 
 /// Where a crash is reported.
 pub fn issues_url() -> String {
