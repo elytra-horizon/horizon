@@ -7,6 +7,7 @@ use crate::{
     items::{ItemStack, Items},
     providers::Providers,
 };
+use horizon_core::identifier::parse_or_keep;
 use horizon_world::loot::PackOverlay;
 use serde_json::Value;
 use std::{collections::HashSet, path::Path};
@@ -149,22 +150,24 @@ pub fn contents_empty(stack: &ItemStack) -> bool {
                 })
         })
 }
-/// Roman amplifier suffix (`potion.potency.N`) and duration lines of a potion.
+/// Roman amplifier suffix (`potion.potency.N`) and duration lines of a potion's
+/// effects and the stack's custom ones (`PotionContents.getAllEffects`).
 pub fn tooltip(
-    potion: Option<&str>,
+    stack: &ItemStack,
     scale: f32,
     translate: &dyn Fn(&str) -> Option<String>,
 ) -> Vec<(String, Category)> {
-    let Some(def) = potion.and_then(self::potion) else {
-        return vec![];
-    };
-    if def.effects.is_empty() {
+    let effects = contents_effects(stack);
+    if effects.is_empty() {
+        if stack.potion().and_then(self::potion).is_none() {
+            return vec![];
+        }
         return vec![(
             translate("effect.none").unwrap_or_else(|| "No Effects".into()),
             Category::Neutral,
         )];
     }
-    effect_lines(def.effects.iter().copied(), scale, translate)
+    effect_lines(effects, scale, translate)
 }
 /// `PotionContents.addPotionTooltip`'s line per effect: its name, potency and
 /// scaled duration, for (effect id, duration, amplifier) entries.
@@ -215,10 +218,21 @@ pub struct PotionIngredient {
 impl PotionIngredient {
     fn parse(v: &Value, items: &Items) -> Self {
         let mut set = HashSet::new();
+        // `Ingredient.CODEC` reads each id through `HolderSetCodec` (`TagKey.hashedCodec`
+        // for tags, `Item.CODEC` for items): a bare id or `#tag` names `minecraft`'s.
         let add = |s: &str, set: &mut HashSet<String>| match s.strip_prefix('#') {
-            Some(tag) => set.extend(items.item_tags.get(tag).into_iter().flatten().cloned()),
+            Some(tag) => {
+                set.extend(
+                    items
+                        .item_tags
+                        .get(&parse_or_keep(tag))
+                        .into_iter()
+                        .flatten()
+                        .cloned(),
+                );
+            }
             None => {
-                set.insert(s.to_owned());
+                set.insert(parse_or_keep(s));
             }
         };
         match &v["item"] {
@@ -286,8 +300,10 @@ impl Brewing {
             if v["type"] != "minecraft:brewing" {
                 continue;
             }
+            // `ItemStackTemplate.CODEC` reads the output id via `Item.CODEC`,
+            // which reads via `Identifier.parse`: a bare id names `minecraft`'s.
             let mut output = ItemStack::new(
-                v["output"]["id"].as_str().unwrap_or("minecraft:potion"),
+                &parse_or_keep(v["output"]["id"].as_str().unwrap_or("minecraft:potion")),
                 v["output"]["count"].as_u64().unwrap_or(1) as u32,
             );
             if let Some(potion) =
@@ -637,6 +653,48 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    /// `Ingredient.CODEC` (`HolderSetCodec`): a bare item id or `#tag` names
+    /// `minecraft`'s, so `nether_wart` matches `minecraft:nether_wart` and
+    /// `#planks` resolves the `minecraft:planks` tag.
+    #[test]
+    fn bare_ingredient_ids_name_minecrafts() {
+        let mut tags = std::collections::HashMap::new();
+        tags.insert(
+            "minecraft:planks".to_owned(),
+            ["minecraft:oak_planks".to_owned()]
+                .into_iter()
+                .collect::<HashSet<_>>(),
+        );
+        let items = Items::for_tests(tags);
+        let item = PotionIngredient::parse(&serde_json::json!({"item": "nether_wart"}), &items);
+        assert!(item.test(&ItemStack::new("minecraft:nether_wart", 1)));
+        let tag = PotionIngredient::parse(&serde_json::json!({"item": "#planks"}), &items);
+        assert!(tag.test(&ItemStack::new("minecraft:oak_planks", 1)));
+        assert!(!tag.test(&ItemStack::new("minecraft:stone", 1)));
+    }
+
+    /// `ItemStackTemplate.CODEC` reads `output.id` via `Item.CODEC`: a bare id
+    /// names `minecraft`'s.
+    #[test]
+    fn bare_output_id_names_minecrafts() {
+        let root = content_brewing_root("bare-output", "");
+        std::fs::create_dir_all(root.join("data/minecraft/recipe/brewing")).unwrap();
+        std::fs::write(
+            root.join("data/minecraft/recipe/brewing/bare.json"),
+            br#"{"type":"minecraft:brewing","output":{"id":"emerald"}}"#,
+        )
+        .unwrap();
+        let items = Items::for_tests(Default::default());
+        let recipes = Brewing::load(&root, &items, &PackOverlay::NONE);
+        let bare = recipes
+            .recipes
+            .iter()
+            .find(|r| r.id == "minecraft:brewing/bare")
+            .unwrap();
+        assert_eq!(&*bare.output.item, "minecraft:emerald");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn stack_fuel_controls_brew_duration_and_consumption() {
         let items = Items::for_tests(Default::default());
@@ -752,7 +810,8 @@ mod tests {
         assert_eq!(format_duration(1800), "01:30");
         assert_eq!(format_duration(72000), "01:00:00");
         assert_eq!(format_tick_duration(9600, 40.0), "04:00");
-        let t = tooltip(Some("minecraft:strong_poison"), 1.0, &|_| None);
+        let poison = ItemStack::new("minecraft:potion", 1).with_potion("minecraft:strong_poison");
+        let t = tooltip(&poison, 1.0, &|_| None);
         assert_eq!(t[0].0, "poison II (00:21)");
         assert_eq!(POTIONS.len(), 46);
     }
@@ -905,7 +964,9 @@ mod tests {
         }
         let ru = crate::lang::Language::load(&[&root], "ru_ru");
         let translate = |key: &str| ru.get(key).map(str::to_owned);
-        let lines = tooltip(Some("minecraft:turtle_master"), 0.125, &translate);
+        let master =
+            ItemStack::new("minecraft:tipped_arrow", 1).with_potion("minecraft:turtle_master");
+        let lines = tooltip(&master, 0.125, &translate);
         assert_eq!(lines.len(), 2);
         assert!(lines[0].0.starts_with("Замедление IV ("), "{lines:?}");
         assert!(lines[1].0.starts_with("Сопротивление III ("), "{lines:?}");
@@ -978,6 +1039,42 @@ mod tests {
         assert_eq!(lines[0].0, "resistance (∞)");
         let lines = effect_lines([("minecraft:resistance", 15, 0)], 1.0, &translate);
         assert_eq!(lines[0].0, "resistance");
+    }
+    /// `PotionContents.addPotionTooltip` lists `getAllEffects`: the potion's
+    /// effects, then the custom ones, and a potion with only custom effects
+    /// is no "No Effects".
+    #[test]
+    fn the_tooltip_lists_custom_effects_too() {
+        use horizon_core::nbt::Tag;
+        let custom = |id: &str, duration: i32, amplifier: i32| {
+            Tag::compound([
+                ("id", Tag::String(id.into())),
+                ("duration", Tag::Int(duration)),
+                ("amplifier", Tag::Int(amplifier)),
+            ])
+        };
+        let mut stack = ItemStack::new("minecraft:potion", 1);
+        assert!(tooltip(&stack, 1.0, &|_| None).is_empty());
+        stack.data_mut().potion_extra = vec![(
+            "custom_effects".into(),
+            Tag::List(vec![custom("minecraft:speed", 600, 1)]),
+        )];
+        let lines: Vec<_> = tooltip(&stack, 1.0, &|_| None)
+            .into_iter()
+            .map(|l| l.0)
+            .collect();
+        assert_eq!(lines, ["speed II (00:30)"]);
+        let stack = ItemStack::new("minecraft:potion", 1).with_potion("minecraft:strong_poison");
+        let mut mixed = stack.clone();
+        mixed.data_mut().potion_extra = vec![(
+            "custom_effects".into(),
+            Tag::List(vec![custom("minecraft:glowing", 200, 0)]),
+        )];
+        let lines: Vec<_> = tooltip(&mixed, 1.0, &|_| None)
+            .into_iter()
+            .map(|l| l.0)
+            .collect();
+        assert_eq!(lines, ["poison II (00:21)", "glowing (00:10)"]);
     }
     #[test]
     fn custom_contents_color_and_empty_semantics() {

@@ -148,16 +148,21 @@ pub fn vsync_present_mode(supported: &[PresentMode], vsync: bool) -> Option<Pres
 
 /// The present mode for the VSync option and Horizon's present-mode setting
 /// (`None` for Auto). VSync on always means Fifo, in a window and in
-/// fullscreen alike, as in vanilla; the setting chooses only while VSync is
-/// off, when the surface supports it, and otherwise vanilla's choice applies.
+/// fullscreen alike, as in vanilla. With VSync off, explicit Mailbox
+/// falls back to tear-free Fifo rather than Immediate; other modes
+/// fall back to vanilla's choice when unavailable.
 pub fn chosen_present_mode(
     supported: &[PresentMode],
     vsync: bool,
     setting: Option<PresentMode>,
 ) -> Option<PresentMode> {
-    setting
-        .filter(|m| !vsync && supported.contains(m))
-        .or_else(|| vsync_present_mode(supported, vsync))
+    match setting {
+        Some(PresentMode::Mailbox) if !vsync => [PresentMode::Mailbox, PresentMode::Fifo]
+            .into_iter()
+            .find(|mode| supported.contains(mode)),
+        Some(mode) if !vsync && supported.contains(&mode) => Some(mode),
+        _ => vsync_present_mode(supported, vsync),
+    }
 }
 
 /// `FramerateLimiter.limitDisplayFPS` with an injectable clock so the sleep
@@ -692,9 +697,9 @@ fn decode_icon(png: &[u8]) -> Option<winit::window::Icon> {
     winit::window::Icon::from_rgba(bytes, info.width, info.height).ok()
 }
 
-/// Apply the icon given to [`set_icon_png`] to a window. Windows has a separate taskbar icon slot
-/// from the small window icon; requiring a given icon to decode there prevents a generic taskbar
-/// icon from appearing.
+/// Apply the icon given to [`set_icon_png`] and the vanilla minimum inner size (320x240) to a window.
+/// Windows has a separate taskbar icon slot from the small window icon; requiring a given icon to
+/// decode there prevents a generic taskbar icon from appearing.
 pub fn with_icon(attributes: winit::window::WindowAttributes) -> winit::window::WindowAttributes {
     #[cfg(not(target_os = "windows"))]
     let icon = icon();
@@ -702,6 +707,9 @@ pub fn with_icon(attributes: winit::window::WindowAttributes) -> winit::window::
     let icon =
         icon_png().map(|png| decode_icon(png).expect("the window icon must decode on Windows"));
 
+    // Vanilla 26.3 Window.createWindow: SDL_SetWindowMinimumSize(windowHandle, 320, 240).
+    let attributes =
+        attributes.with_min_inner_size(winit::dpi::LogicalSize::new(320.0f64, 240.0f64));
     let attributes = attributes.with_window_icon(icon.clone());
     #[cfg(target_os = "windows")]
     let attributes =
@@ -1079,9 +1087,14 @@ mod tests {
             Some(Mailbox)
         );
         assert_eq!(chosen_present_mode(&all, false, Some(Fifo)), Some(Fifo));
-        // Metal has no Mailbox: vanilla's choice instead.
+        // A surface without Mailbox can still honor the explicit tear-free choice.
+        let without_mailbox = [Fifo, Immediate];
         assert_eq!(
-            chosen_present_mode(&[Fifo, Immediate], false, Some(Mailbox)),
+            chosen_present_mode(&without_mailbox, false, Some(Mailbox)),
+            Some(Fifo)
+        );
+        assert_eq!(
+            chosen_present_mode(&without_mailbox, false, None),
             Some(Immediate)
         );
     }
@@ -1108,5 +1121,16 @@ mod tests {
         assert_eq!(list.refresh(None, &mut modes), Some(vec![]));
         assert_eq!(list.refresh(Some(2), &mut modes), Some(vec![mode(2)]));
         assert_eq!(listings, 3);
+    }
+
+    #[test]
+    fn with_icon_enforces_vanilla_minimum_inner_size() {
+        let attrs = with_icon(winit::window::Window::default_attributes());
+        assert_eq!(
+            attrs.min_inner_size,
+            Some(winit::dpi::Size::Logical(winit::dpi::LogicalSize::new(
+                320.0f64, 240.0f64
+            )))
+        );
     }
 }

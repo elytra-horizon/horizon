@@ -7,7 +7,7 @@ use super::{
     anim::{Poses, State},
     goals::{
         Breed, Cx, Float, FollowParent, Goal, LookAtPlayer, MOVE, Panic, RandomLookAround, Stroll,
-        Tempt, goal_clone,
+        Tempt, goal_clone, reduced,
     },
 };
 use horizon_core::geometry::Vec3;
@@ -160,8 +160,12 @@ pub fn rear_offset(m: &Mob) -> [f64; 3] {
     [0.0, 0.15 * stand * scale, -0.7 * stand * scale]
 }
 /// `AbstractHorse.isImmobile`: no goals while it eats or rears. A mount its
-/// rider steers still takes their input (`travelRidden`).
+/// rider steers still takes their input (`travelRidden`). `Llama.isImmobile`:
+/// only while it eats (a loaded `EatingHaystack`; it never grazes).
 pub fn immobile(m: &Mob) -> bool {
+    if super::llama::is_llama(m.species()) {
+        return m.extra.flag;
+    }
     can_rear(m.species()) && (m.extra.flag || m.extra.counter > 0) && !controlled(m)
 }
 /// `AbstractHorse.onElasticLeashPull`: a lead pulled taut ends the horse's
@@ -479,6 +483,14 @@ impl RunAroundLikeCrazy {
         Self { pos: None }
     }
 }
+
+/// `RunAroundLikeCrazyGoal.tick`'s roll: `nextInt(this.adjustedTickDelay(50))`.
+/// The goal has no `requiresUpdateEveryTick`, so it runs on the full selector
+/// updates and `adjustedTickDelay` is `reducedTickDelay(50)`.
+fn buck_roll(m: &mut Mob) -> bool {
+    m.random.next_int_bound(reduced(50)).unwrap_or(1) == 0
+}
+
 impl Goal for RunAroundLikeCrazy {
     goal_clone!();
     fn flags(&self) -> u8 {
@@ -504,11 +516,8 @@ impl Goal for RunAroundLikeCrazy {
         // `canContinueToUse` has no `isMobControlled` check (RunAroundLikeCrazyGoal:47).
         !m.extra.tame && !m.ai.nav.is_done() && is_vehicle(m)
     }
-    fn every_tick(&self) -> bool {
-        true
-    }
     fn tick(&mut self, m: &mut Mob, cx: &mut Cx) {
-        if m.extra.tame || m.random.next_int_bound(50).unwrap_or(1) != 0 {
+        if m.extra.tame || !buck_roll(m) {
             return;
         }
         let temper = temper(m);
@@ -1568,6 +1577,24 @@ mod tests {
         assert_eq!(m.extra.counter, 0);
     }
 
+    /// `Llama.isImmobile` is `isDeadOrDying() || isEating()`: an eating llama
+    /// runs no goals, and a llama does not stand (#18677).
+    #[test]
+    fn an_eating_llama_is_immobile() {
+        for (species, id) in [
+            (Species::Llama, "minecraft:llama"),
+            (Species::TraderLlama, "minecraft:trader_llama"),
+        ] {
+            let mut m = equine(1, species, id);
+            assert!(!immobile(&m), "{id}");
+            m.extra.flag = true;
+            assert!(immobile(&m), "{id} eating");
+            m.extra.flag = false;
+            m.extra.counter = 5;
+            assert!(!immobile(&m), "{id} has no standing");
+        }
+    }
+
     #[test]
     fn llamas_and_camels_never_rear_when_hurt() {
         let mut test_level = crate::health::TestLevel::new(0);
@@ -1693,6 +1720,50 @@ mod tests {
             outcomes,
             vec![true, false],
             "a mob-ridden horse bolts; a mob-ridden zombie horse is controlled"
+        );
+    }
+
+    /// `ZombieHorse.addBehaviourGoals` tempts with `#minecraft:zombie_horse_food`,
+    /// which `VanillaItemTagsProvider` fills with the red mushroom alone
+    /// (`ZombieHorse.isFood` reads the same tag): a player holding one tempts a
+    /// zombie horse, one holding its family's wheat does not.
+    #[test]
+    fn a_red_mushroom_tempts_a_zombie_horse() {
+        use crate::mobs::world::{test_player, with_test_world};
+        let tempted = |hand: &str| -> Option<bool> {
+            let mut out = None;
+            let ran = with_test_world(&[], |w, types| {
+                let mut world = w.clone();
+                let mut p = test_player(Vec3::new(5.5, 64.0, 0.5));
+                p.main_hand = Some(hand.into());
+                world.player = Some(p);
+                let kind = Arc::new(types.types["minecraft:zombie_horse"].clone());
+                let mut m = Mob::new(1, kind, Vec3::new(0.5, 64.0, 0.5), 0.0);
+                register(&mut m);
+                m.on_ground = true;
+                let mut lr = crate::health::TestLevel::new(0);
+                let mut events = Vec::new();
+                let mut cx = Cx {
+                    w: &world,
+                    level: &mut lr.level(),
+                    events: &mut events,
+                };
+                let mut goals = std::mem::take(&mut m.ai.goals);
+                goals.tick(&mut m, &mut cx);
+                out = Some(goals.is_running("Tempt"));
+                m.ai.goals = goals;
+            });
+            let _ = ran;
+            out
+        };
+        let Some(mushroom) = tempted("minecraft:red_mushroom") else {
+            return;
+        };
+        assert!(mushroom, "a red mushroom tempts a zombie horse");
+        assert_eq!(
+            tempted("minecraft:wheat"),
+            Some(false),
+            "wheat is horse food, not zombie horse food"
         );
     }
 
@@ -1849,3 +1920,40 @@ mod follow_mommy_tests {
 #[cfg(test)]
 #[path = "bolt_pos_tests.rs"]
 mod bolt_pos_tests;
+
+#[cfg(test)]
+mod goal_timing_tests {
+    use super::*;
+    use crate::mobs::sensor_scan_tests::kind;
+    use horizon_core::random::{EntityRandom, LegacyRandom, RandomSource};
+
+    /// `RunAroundLikeCrazyGoal` has no `requiresUpdateEveryTick`, so its `tick`
+    /// runs on the full selector updates only, and the roll there is
+    /// `nextInt(adjustedTickDelay(50))` = `nextInt(reducedTickDelay(50))` = 25,
+    /// one draw per full update rather than one per game tick.
+    #[test]
+    fn a_bolting_horse_rolls_a_buck_every_twenty_five_full_updates() {
+        assert!(
+            !RunAroundLikeCrazy::new().every_tick(),
+            "RunAroundLikeCrazyGoal ticks on full updates only"
+        );
+        let told_apart = (0..100_000).any(|seed| {
+            (LegacyRandom::new(seed).next_int_bound(25) == Ok(0))
+                != (LegacyRandom::new(seed).next_int_bound(50) == Ok(0))
+        });
+        assert!(
+            told_apart,
+            "the seeds must tell nextInt(25) from nextInt(50)"
+        );
+        for seed in 0..256 {
+            let at_25 = LegacyRandom::new(seed).next_int_bound(25) == Ok(0);
+            let mut m = Mob::new(1, kind(), Vec3::ZERO, 0.0);
+            m.random = EntityRandom::own(LegacyRandom::new(seed));
+            assert_eq!(
+                buck_roll(&mut m),
+                at_25,
+                "seed {seed}: the roll is nextInt(25)"
+            );
+        }
+    }
+}

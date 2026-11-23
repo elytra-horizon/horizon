@@ -116,6 +116,15 @@ impl NativeShaders {
         self.resolved.clone()
     }
 
+    /// No pick: the next `resolve_path` looks again, as one asked with no pick would, without
+    /// the disk now (`follow_frame` asks every frame; title screens don't call `resolve_path`).
+    pub fn forget_selection(&mut self) {
+        if !self.selection.is_empty() {
+            self.selection.clear();
+            self.resolved_at = None;
+        }
+    }
+
     pub fn select(&mut self, name: &str) {
         self.picked = name.to_owned();
         self.stamp = None;
@@ -188,7 +197,7 @@ impl Game<'_> {
     }
 
     /// Builds the pack at `path` when its files changed since it was last read.
-    pub(super) fn tick_native_shader_pack(&mut self, path: &Path) {
+    pub(in crate::game) fn tick_native_shader_pack(&mut self, path: &Path) {
         // A reload would replace the pack a `screenshot-sequence` draws: it waits for the reply.
         if self.screenshot_sequence.is_some() {
             return;
@@ -200,7 +209,21 @@ impl Game<'_> {
         }
         state.looked = Some(now);
         let stamp = fingerprint(path);
-        if stamp == state.stamp || refused(path, stamp) {
+        if stamp == state.stamp {
+            // A pack gone (no stamp) is never read: a renderer made again holds the world for
+            // nothing (`release_world`, which leaves a running pack's alone).
+            if stamp.is_none()
+                && let Some(renderer) = &mut self.renderer
+            {
+                renderer.release_world();
+            }
+            return;
+        }
+        if refused(path, stamp) {
+            // A renderer made again for this pack holds the world for it (`release_world`).
+            if let Some(renderer) = &mut self.renderer {
+                renderer.release_world();
+            }
             return;
         }
         let reload = state.stamp.is_some();
@@ -258,8 +281,39 @@ impl Game<'_> {
                     }
                 }
             }
+            // Each light source a `[ray_tracing] lights = true` pack's rays read: its
+            // `[[lights]]` colour, its level and its model's `[[materials]]` id (lava left out),
+            // where a stage reads them and the device traces.
+            let mut sources = horizon_client::gfx::ray_lights::Sources::default();
+            let traces_lights = report.stages.iter().any(|s| s.traces_lights());
+            if traces_lights && renderer.ray_queries() {
+                let catalog = &self.pack.render.model_catalog;
+                let origin = horizon_core::position::BlockPos::new(0, 0, 0);
+                for (id, state) in self.res.facts().states.iter().enumerate() {
+                    if state.emission == 0 {
+                        continue;
+                    }
+                    let state_id = horizon_world::registry::BlockStateId(id as u32);
+                    let models = catalog.collect(state_id, origin).unwrap_or_default();
+                    let layers = models
+                        .iter()
+                        .flat_map(|(_, m)| m.faces.iter().map(|f| f.layer));
+                    let color = pack.manifest.light_of(&state.name);
+                    let light = (state.emission, state.fluid);
+                    let source = horizon_client::gfx::ray_lights::source;
+                    if let Some(s) = source(light, color, layers, &materials) {
+                        sources.insert(id as u32, s);
+                    }
+                }
+            }
             let labels = renderer
-                .set_native_shader_pack(Some((report, constants, tags, materials, lights)))
+                .set_native_shader_pack(Some((
+                    report,
+                    constants,
+                    tags,
+                    materials,
+                    (lights, sources),
+                )))
                 .map_err(|e| vec![e])?;
             Ok((pack.manifest, labels, translucent))
         });
@@ -270,14 +324,26 @@ impl Game<'_> {
             manifest_refused.is_some(),
             running,
         );
-        // The resources were loaded without a native pack, so without the resource packs'
-        // LabPBR maps its material stage reads: load them once, now that one runs.
-        if result.as_ref().is_ok_and(|(m, _, _)| m.material.is_some())
-            && !horizon_client::sprites::labpbr_maps()
-        {
-            horizon_client::sprites::set_labpbr_maps(true);
-            log::info!("Horizon: reloading resources for the LabPBR maps a native pack reads");
-            self.reload_packs();
+        // A refused manifest stops its preceding pack; other failed hot reloads keep it.
+        // Only a pack that still runs can retain its preceding material-map demand.
+        let material_maps = match &result {
+            Ok((manifest, _, _)) => manifest.material.is_some(),
+            Err(_) => {
+                manifest_refused.is_none()
+                    && renderer.shader_pack_kind() == Some("native")
+                    && horizon_client::sprites::labpbr_maps()
+            }
+        };
+        if material_maps != horizon_client::sprites::labpbr_maps() {
+            renderer.drop_shader_packs();
+            // An existing resource load resets this pack's stamp when it applies. Let it
+            // finish before changing what its workers read; the next build rechecks demand.
+            if self.rest_loader.is_none() && self.pack_reload.is_none() && !self.pending_pack_reload
+            {
+                horizon_client::sprites::set_labpbr_maps(material_maps);
+                log::info!("Horizon: reloading resources for native pack material-map demand");
+                self.reload_packs();
+            }
         }
         let name = path.file_name().unwrap_or_default().to_string_lossy();
         match result {
@@ -300,6 +366,8 @@ impl Game<'_> {
                         renderer.drop_shader_packs();
                     }
                     self.set_translucent_layers(Vec::new());
+                } else if let Some(renderer) = &mut self.renderer {
+                    renderer.release_world();
                 }
                 log::warn!("shader pack {name} refused: {}", problems.join("; "));
                 self.system_message(Text::colored(format!("Shader pack {name} refused:"), RED));
@@ -322,8 +390,15 @@ fn manifest_refused(path: &Path) -> Option<String> {
     }
 }
 
+/// Whether the served native material stage can read resource-pack companion maps.
+pub(super) fn needs_material_maps(manifest: &Manifest) -> bool {
+    manifest.material.is_some() && not_drawn(manifest).is_none()
+}
+
 /// Why the game doesn't draw a pack the check may still pass: `[frame] primaries = "bt2020"`
-/// isn't served yet (#14584), and neither is `[motion]`.
+/// isn't served yet (#14584), and neither is `[motion]`. Serving `"bt2020"` must also keep HDR's
+/// Color Boost (`gfx::hdr::gamut`) off for that pack: it stretches BT.709 colours, and a BT.2020
+/// pack's are already where it meant them.
 fn not_drawn(m: &Manifest) -> Option<&'static str> {
     if m.primaries == Primaries::Bt2020 {
         return Some(

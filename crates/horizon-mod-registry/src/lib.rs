@@ -162,9 +162,19 @@ impl App {
     }
 }
 
+/// The service's version and the shader API line it serves: a deployment older than a shader
+/// API bump is visible from here, without a signed-in request (#17395).
+async fn healthz() -> String {
+    format!(
+        "ok {} shader-api {}",
+        env!("CARGO_PKG_VERSION"),
+        index::SHADER_API
+    )
+}
+
 pub fn router(app: App) -> Router {
     Router::new()
-        .route("/healthz", get(|| async { "ok" }))
+        .route("/healthz", get(healthz))
         .route("/api/mods/auth/login", get(login))
         .route("/api/mods/auth/callback", get(callback))
         .route("/api/mods/auth/logout", post(logout))
@@ -1201,11 +1211,14 @@ pub fn publish(
     Ok(url)
 }
 
-/// The client's address as the proxy in front of the service saw it: `X-Real-IP`, else the
-/// last `X-Forwarded-For` hop (the one the proxy appended). The first hop is whatever the
+/// The client's address as the proxy in front of the service saw it: Cloudflare's `CF-Connecting-IP`
+/// (its edge overwrites one a client sends), else the last `X-Forwarded-For` hop (the one the proxy
+/// appended). The first hop is whatever the
 /// client sent, so a limit keyed on it could be dodged by changing the header.
 fn client_ip(headers: &HeaderMap) -> String {
-    let real = headers.get("x-real-ip").and_then(|v| v.to_str().ok());
+    let real = headers
+        .get("cf-connecting-ip")
+        .and_then(|v| v.to_str().ok());
     let forwarded = || {
         headers
             .get_all("x-forwarded-for")
@@ -1636,7 +1649,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("x-forwarded-for", "1.2.3.4, 203.0.113.9".parse().unwrap());
         assert_eq!(client_ip(&headers), "203.0.113.9");
-        headers.insert("x-real-ip", "198.51.100.7".parse().unwrap());
+        headers.insert("cf-connecting-ip", "198.51.100.7".parse().unwrap());
         assert_eq!(client_ip(&headers), "198.51.100.7");
         assert_eq!(client_ip(&HeaderMap::new()), "anonymous");
     }
@@ -1650,5 +1663,11 @@ mod tests {
         assert!(is_target_triple("x86_64-pc-windows-gnu"));
         assert!(is_target_triple("aarch64-apple-darwin"));
         assert!(!is_target_triple("riscv64gc-unknown-linux-gnu"));
+    }
+    #[tokio::test]
+    async fn healthz_names_the_shader_api_this_build_serves() {
+        let body = healthz().await;
+        assert!(body.contains(env!("CARGO_PKG_VERSION")), "{body}");
+        assert!(body.contains(index::SHADER_API), "{body}");
     }
 }

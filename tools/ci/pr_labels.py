@@ -44,6 +44,9 @@ _G = r"crates/horizon-client(?:-render|-core|-input)?/src/"  # the client's crat
 _GAME = _G + r"(?:game/(?:[^/]+/)?)?"
 # Area: (label, description, the paths). First match wins for each file.
 AREAS = [
+    ("translations", "Area: translations and the Crowdin setup",
+     r"^(?:crates/horizon-client/assets/horizon/lang/|launcher/lang/|tools/lang_review/|docs/translations\.md$"
+     r"|crowdin\.yml$|\.github/crowdin-approved\.yml$|\.github/workflows/crowdin\.yml$|tools/crowdin_import\.py$)"),
     ("launcher", "Changes the launcher", r"^launcher/"),
     ("mods", "Area: mods, mod SDK, modpack porting",
      r"^crates/(?:horizon-mod|cargo-horizon-mod|horizon-port-pack)|" + _GAME
@@ -90,8 +93,8 @@ TITLE_ALIASES = {"fix": "bug", "feat": "feature"}  # Conventional Commits' words
 AREA_LABELS = {label for label, _, _ in AREAS}
 # Size: (label, the most counted lines it takes, its colour). XL is over the 3000 lines of CONTRIBUTING.md's limit,
 # though this count also has the moved lines and inline tests that pr_ready leaves out.
-SIZES = [("size: XS", 50, "ededed"), ("size: S", 150, "d4d4d4"), ("size: M", 500, "bbbbbb"),
-         ("size: L", 3000, "9e9e9e"), ("size: XL", None, "808080")]
+SIZES = [("size: XS", 50, "0e8a16"), ("size: S", 150, "5ebd3e"), ("size: M", 500, "fbca04"),
+         ("size: L", 3000, "fe7d37"), ("size: XL", None, "b60205")]
 SIZE_LABELS = {label for label, _, _ in SIZES}
 
 

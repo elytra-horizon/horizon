@@ -236,6 +236,15 @@ pub trait MobsBackend {
     #[access(WorldOnly)]
     fn unspawned_mob_tags(&self, mob: UnspawnedMobRef) -> Result<Vec<String>, UnspawnedMobError>;
     /// Side: server.
+    /// Whether the unspawned mob is a baby (`LivingEntity.isBaby`): a negative age on a type
+    /// that can be one. `finalize_spawn` lends the mob before finalization runs, so one that
+    /// finalization makes a baby (a baby zombie, a young animal of a natural spawn's pack) is
+    /// still an adult there. The ender dragon never is a baby; `Unsupported` where the game
+    /// lends no mob of its own (as for `equipment`). `Expired` once the hook that lent it has
+    /// returned.
+    #[access(WorldOnly)]
+    fn unspawned_mob_baby(&self, mob: UnspawnedMobRef) -> Result<bool, UnspawnedMobError>;
+    /// Side: server.
     /// The unspawned mob's custom name, if it has one. `Expired` once the hook that lent it has returned.
     #[access(WorldOnly)]
     fn unspawned_mob_custom_name(
@@ -290,6 +299,18 @@ pub trait MobsBackendMut {
     /// `remove_goal` does on the goal selector.
     #[access(WorldOnly)]
     fn mob_remove_target_goal(&mut self, mob: MobRef, id: &str) -> Option<usize>;
+    /// Side: server.
+    /// Gives the mob the goals a new mob of its kind gets, for a mod whose
+    /// goals changed while the mob lived (a hot reload, a new
+    /// configuration): `register_goals` is asked once, when a mob is made.
+    /// Every running goal is stopped, both selectors are emptied and the
+    /// mob's goals are registered again, the species' own and then each
+    /// part's, with the mob as it stands now. What was added to the mob since
+    /// it was made (`add_goal`, `add_target_goal`) is gone, and the flags a
+    /// rider disables stay. False for a stale or unavailable mob, a client,
+    /// and the dragon.
+    #[access(WorldOnly)]
+    fn mob_reset_goals(&mut self, mob: MobRef) -> bool;
     /// Side: server.
     /// `PathNavigation.moveTo(x, y, z, speed)`: true if a path was started.
     /// Refuses a stale or unavailable mob, a client, non-finite arguments,

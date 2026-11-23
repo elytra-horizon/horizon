@@ -27,9 +27,11 @@
     "horizon-client-core": "engine",
     "horizon-client-input": "engine",
     "horizon-client-lib": "engine",
+    "horizon-client-gameplay": "engine",
     "horizon-client-render": "engine",
     "horizon-command": "engine",
     "horizon-core": "engine",
+    "horizon-gameplay": "engine",
     "horizon-items": "engine",
     "horizon-narrator": "engine",
     "horizon-perf-format": "engine",
@@ -79,8 +81,6 @@
     "horizon-internals": "platform",
     "horizon-mod-api": "platform",
     "horizon-mod-api-macros": "engine",
-    "horizon-mod-point-emit": "platform",
-    "horizon-mod-point-shape": "engine",
     "horizon-mod-surface": "engine",
     "horizon-mod-source": "engine",
     "horizon-mod-points": "platform",
@@ -111,7 +111,6 @@
       "horizon-protocol",
       "horizon-world",
       "horizon-mod-package",
-      "horizon-mod-point-shape",
       "horizon-mod-surface",
       "horizon-mod-source",
       "horizon-mod-runtime",
@@ -124,6 +123,10 @@
       "horizon-guest-stack",
       "horizon-java-properties"
     ],
+    "pending": {
+      "_doc": "Engine crates that still take a non-portable crate, until the types they need move down. Entries only go away.",
+      "horizon-gameplay": ["horizon-client-lib"]
+    },
     "forbidden": [
       "arboard",
       "cpal",

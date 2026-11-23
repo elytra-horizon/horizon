@@ -99,6 +99,9 @@ pub(super) fn build_renderer(
     renderer
         .hud
         .set_text_shader(&renderer.device, atlas.text_shaders.gui.as_deref());
+    renderer
+        .hud
+        .set_blit_shader(&renderer.device, atlas.blit_shader.as_deref());
     pack.item_renderer
         .prepare_glint_atlas(renderer.device.limits().max_texture_dimension_2d, filtering)?;
     renderer.set_lines_shader(atlas.lines_shader.as_deref());
@@ -370,10 +373,6 @@ pub(super) fn start_game<'a>(
             },
         );
     }
-    if let Some(directory) = std::env::var_os("HORIZON_NATIVE_CLIENT_PARTICLES_FIXTURE") {
-        game.run_native_client_particles_fixture(std::path::Path::new(&directory))?;
-        return Ok(None);
-    }
     if let Some(directory) = std::env::var_os("HORIZON_BOAT_RIDER_FIXTURE") {
         game.run_boat_rider_fixture(std::path::Path::new(&directory))?;
         return Ok(None);
@@ -411,6 +410,11 @@ pub(super) fn start_game<'a>(
     game.publish_initial_client_models()?;
     // Finish Setup -> Config -> World before any screen, connection, input or tick hooks.
     game.native_configs_client_start();
+    // After the World phase: the Host bridge refuses add_particle during Setup, as for a mod.
+    if let Some(directory) = std::env::var_os("HORIZON_NATIVE_CLIENT_PARTICLES_FIXTURE") {
+        game.run_native_client_particles_fixture(std::path::Path::new(&directory))?;
+        return Ok(None);
+    }
     if let Some(error) = pack_error {
         game.open_options_at(true, horizon_client::options_ui::Page::Packs);
         game.ui.options.resource_error = Some(error);
@@ -451,6 +455,7 @@ pub(super) fn start_game<'a>(
                     seed: Some(seed),
                     creative,
                     create: None,
+                    existing_only: false,
                 });
             }
         }

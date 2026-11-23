@@ -243,7 +243,8 @@ impl Game<'_> {
             let uuid = self.uuid_for(self.next_entity);
             self.falling.push(FallingBlock {
                 attachment_lifetime: Default::default(),
-                rotation: [0.0, 0.0],
+                // Entity.load: the saved Rotation, as the save writes it back.
+                rotation: entity_nbt::loaded_rotation(&tag),
                 join: Default::default(),
                 id: self.next_entity,
                 state,
@@ -560,6 +561,8 @@ impl Game<'_> {
                 &difficulty,
                 horizon_client::mobs::spawn_rules::Reason::Structure,
             );
+            // `Shulker.finalizeSpawn` ends in yaw 0 here as on the other spawn paths.
+            horizon_client::mobs::shulker::finalize_spawn(&mut m);
         }
         horizon_client::mobs::armor::prepare(&m, &self.motion.attributes);
         let id = m.id;
@@ -826,8 +829,26 @@ impl Game<'_> {
     pub(super) fn mob_object_tree_nbt(&mut self, object: MobObject) -> Tag {
         let id = self.mob_at(object).id;
         let mut tag = self.mob_object_nbt(object);
-        self.put_mob_passengers(&mut tag, id);
+        self.put_riding(&mut tag, object, id);
         tag
+    }
+
+    /// `Entity.saveWithoutId`'s riding parts for a mob object (id `id`): a passenger saves `Pos`
+    /// at its vehicle's x and z with its own y, then the mobs riding it go under `Passengers`.
+    /// Resident and off-level mobs, and riders saved through their mount, all come here.
+    fn put_riding(&mut self, tag: &mut Tag, object: MobObject, id: u32) {
+        use crate::game::commands::Target;
+        let vehicle = self.passenger_vehicle_target(Target::Mob(id));
+        if let (Some(at), Tag::Compound(c)) =
+            (vehicle.and_then(|v| self.target_position(v)), &mut *tag)
+        {
+            let pos = [at[0], self.mob_at(object).position.y, at[2]];
+            c.insert(
+                "Pos".into(),
+                Tag::List(pos.map(|v| Tag::Double(v.to_bits())).into()),
+            );
+        }
+        self.put_mob_passengers(tag, id);
     }
 
     pub(super) fn mob_object_nbt(&mut self, object: MobObject) -> Tag {
