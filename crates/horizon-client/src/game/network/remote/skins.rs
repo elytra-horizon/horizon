@@ -224,12 +224,15 @@ impl Game<'_> {
         let mut capes: HashMap<u128, String> = HashMap::new();
         for (uuid, textures) in entries {
             // PlayerInfo.createSkinLookup: only the local player's own skin
-            // may be unsigned.
+            // may be unsigned — and on an offline server, everyone's: ely.by's
+            // properties are unsigned, and the server hands them out to all.
             let skin = {
                 let mut downloads = self.skin_downloads.borrow_mut();
-                horizon_client::skins::lookup(&textures, uuid != local, |kind, url| {
-                    downloads.state(kind, url)
-                })
+                horizon_client::skins::lookup(
+                    &textures,
+                    uuid != local && r.online_mode,
+                    |kind, url| downloads.state(kind, url),
+                )
             };
             if let Some(skin) = skin {
                 if textures.slim {
